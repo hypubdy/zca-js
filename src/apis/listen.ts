@@ -1,4 +1,5 @@
 import EventEmitter from "events";
+import { summarizeCallControlBatch, type CallControlBatchSummary, type CallEvent } from "../models/CallEvent.js";
 import WebSocket from "ws";
 import { type FriendEvent, initializeFriendEvent, type TFriendEvent } from "../models/FriendEvent.js";
 import { type GroupEvent, initializeGroupEvent, type TGroupEvent } from "../models/GroupEvent.js";
@@ -34,6 +35,8 @@ export enum CloseReason {
 }
 
 interface ListenerEvents {
+    call: [event: CallEvent];
+    call_control_batch: [summary: CallControlBatchSummary];
     connected: [];
     disconnected: [code: CloseReason, reason: string];
     closed: [code: CloseReason, reason: string];
@@ -292,8 +295,15 @@ export class Listener extends EventEmitter<ListenerEvents> {
                 if (version == 1 && cmd == 601 && subCmd == 0) {
                     const parsedData = (await decodeEventData(parsed, this.cipherKey)).data;
                     const { controls } = parsedData;
+                    this.emit("call_control_batch", summarizeCallControlBatch(controls));
                     for (const control of controls) {
-                        if (control.content.act_type == "file_done") {
+                        if (control.content.act_type == "voip") {
+                            const content = control.content;
+                            this.emit("call", {
+                                ...content,
+                                data: typeof content.data === "string" ? JSON.parse(content.data) : content.data,
+                            } as CallEvent);
+                        } else if (control.content.act_type == "file_done") {
                             const data = {
                                 fileUrl: control.content.data.url,
                                 fileId: control.content.fileId,

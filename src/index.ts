@@ -1,6 +1,8 @@
 export * from "./Errors/index.js";
 export * from "./models/index.js";
 export * from "./zalo.js";
+export type { CallEvent, CallControlBatchSummary } from "./models/CallEvent.js";
+export type { AnswerCallPayload, RequestOutgoingCallPayload, OutgoingCallMediaRequestPayload } from "./apis/voiceCall.js";
 
 export type { ContextSession, ContextBase, AppContextExtended, AppContextBase, Options, ZPWServiceMap, ImageMetadataGetter, ImageMetadataGetterResponse } from "./context.js";
 
@@ -170,3 +172,6 @@ export { MuteAction, MuteDuration } from "./apis/setMute.js";
 export { ChatTTL } from "./apis/updateAutoDeleteChat.js";
 export { UpdateLangAvailableLanguages } from "./apis/updateLang.js";
 export { UpdateSettingsType } from "./apis/updateSettings.js";
+
+// Experimental engine-independent protocol primitives; no native Zalo runtime.
+export * as experimentalCallProtocol from "./call/index.js";

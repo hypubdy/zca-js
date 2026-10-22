@@ -1,0 +1,342 @@
+{
+  "date": "2026-10-21",
+  "helper_sha256": "f1ac81228f235e92d480dfe4619d568b0a84a5abd70fc73256dcab5f73aa3f3e",
+  "ipc_trials": [
+    {
+      "raw_report": "/var/folders/_p/d216dxxn3h72cqwvrj6r206c0000gn/T/zca-call-trial-4crwih/events.json",
+      "executable": "/Applications/Zalo.app/Contents/ZaloHelper.app/Contents/MacOS/ZaloCall",
+      "events": [
+        {
+          "elapsedMs": 1,
+          "type": "launch",
+          "executable": "/Applications/Zalo.app/Contents/ZaloHelper.app/Contents/MacOS/ZaloCall",
+          "init": false
+        },
+        {
+          "elapsedMs": 125,
+          "type": "connected",
+          "channel": "native-to-host"
+        },
+        {
+          "elapsedMs": 125,
+          "type": "connected",
+          "channel": "host-to-native"
+        },
+        {
+          "elapsedMs": 125,
+          "type": "received",
+          "messageType": "update",
+          "command": "native-ready"
+        }
+      ]
+    },
+    {
+      "raw_report": "/var/folders/_p/d216dxxn3h72cqwvrj6r206c0000gn/T/zca-call-trial-TqHb37/events.json",
+      "executable": "/Applications/Zalo.app/Contents/ZaloHelper.app/Contents/MacOS/ZaloCall",
+      "events": [
+        {
+          "elapsedMs": 0,
+          "type": "launch",
+          "executable": "/Applications/Zalo.app/Contents/ZaloHelper.app/Contents/MacOS/ZaloCall",
+          "init": true
+        },
+        {
+          "elapsedMs": 80,
+          "type": "connected",
+          "channel": "native-to-host"
+        },
+        {
+          "elapsedMs": 80,
+          "type": "connected",
+          "channel": "host-to-native"
+        },
+        {
+          "elapsedMs": 80,
+          "type": "received",
+          "messageType": "update",
+          "command": "native-ready"
+        },
+        {
+          "elapsedMs": 81,
+          "type": "sent",
+          "messageType": "update",
+          "command": "init"
+        },
+        {
+          "elapsedMs": 94,
+          "type": "ack",
+          "bytes": 3
+        }
+      ]
+    },
+    {
+      "raw_report": "/var/folders/_p/d216dxxn3h72cqwvrj6r206c0000gn/T/zca-call-trial-8x1qKw/events.json",
+      "executable": "/tmp/zalo-call-analysis/StandaloneZaloHelper.app/Contents/MacOS/ZaloCall",
+      "events": [
+        {
+          "elapsedMs": 0,
+          "type": "launch",
+          "executable": "/tmp/zalo-call-analysis/StandaloneZaloHelper.app/Contents/MacOS/ZaloCall",
+          "init": true
+        },
+        {
+          "elapsedMs": 1629,
+          "type": "connected",
+          "channel": "native-to-host"
+        },
+        {
+          "elapsedMs": 1630,
+          "type": "connected",
+          "channel": "host-to-native"
+        },
+        {
+          "elapsedMs": 1630,
+          "type": "received",
+          "messageType": "update",
+          "command": "native-ready"
+        },
+        {
+          "elapsedMs": 1630,
+          "type": "sent",
+          "messageType": "update",
+          "command": "init"
+        },
+        {
+          "elapsedMs": 1642,
+          "type": "ack",
+          "bytes": 3
+        }
+      ]
+    },
+    {
+      "raw_report": "/var/folders/_p/d216dxxn3h72cqwvrj6r206c0000gn/T/zca-call-trial-ks2dJX/events.json",
+      "executable": "/tmp/zalo-call-analysis/StandaloneZaloHelper.app/Contents/MacOS/ZaloCall",
+      "events": [
+        {
+          "elapsedMs": 1,
+          "type": "launch",
+          "executable": "/tmp/zalo-call-analysis/StandaloneZaloHelper.app/Contents/MacOS/ZaloCall",
+          "init": true
+        },
+        {
+          "elapsedMs": 77,
+          "type": "connected",
+          "channel": "native-to-host"
+        },
+        {
+          "elapsedMs": 77,
+          "type": "connected",
+          "channel": "host-to-native"
+        },
+        {
+          "elapsedMs": 78,
+          "type": "received",
+          "messageType": "update",
+          "command": "native-ready"
+        },
+        {
+          "elapsedMs": 78,
+          "type": "sent",
+          "messageType": "update",
+          "command": "init"
+        },
+        {
+          "elapsedMs": 88,
+          "type": "ack",
+          "bytes": 3
+        },
+        {
+          "elapsedMs": 88,
+          "type": "sent",
+          "messageType": "request",
+          "command": "listDevice"
+        },
+        {
+          "elapsedMs": 328,
+          "type": "ack",
+          "bytes": 3
+        },
+        {
+          "elapsedMs": 328,
+          "type": "received",
+          "messageType": "response",
+          "command": "listDevice",
+          "virtualInputSelected": false,
+          "virtualOutputSelected": false
+        }
+      ]
+    },
+    {
+      "raw_report": "/var/folders/_p/d216dxxn3h72cqwvrj6r206c0000gn/T/zca-call-trial-yRdioK/events.json",
+      "executable": "/tmp/zalo-call-analysis/StandaloneZaloHelper.app/Contents/MacOS/ZaloCall",
+      "events": [
+        {
+          "elapsedMs": 1,
+          "type": "launch",
+          "executable": "/tmp/zalo-call-analysis/StandaloneZaloHelper.app/Contents/MacOS/ZaloCall",
+          "init": true
+        },
+        {
+          "elapsedMs": 105,
+          "type": "connected",
+          "channel": "native-to-host"
+        },
+        {
+          "elapsedMs": 105,
+          "type": "connected",
+          "channel": "host-to-native"
+        },
+        {
+          "elapsedMs": 105,
+          "type": "received",
+          "messageType": "update",
+          "command": "native-ready"
+        },
+        {
+          "elapsedMs": 105,
+          "type": "sent",
+          "messageType": "update",
+          "command": "init"
+        },
+        {
+          "elapsedMs": 114,
+          "type": "ack",
+          "bytes": 3
+        },
+        {
+          "elapsedMs": 114,
+          "type": "sent",
+          "messageType": "request",
+          "command": "listDevice"
+        },
+        {
+          "elapsedMs": 235,
+          "type": "ack",
+          "bytes": 3
+        },
+        {
+          "elapsedMs": 235,
+          "type": "received",
+          "messageType": "response",
+          "command": "listDevice",
+          "virtualInputSelected": false,
+          "virtualOutputSelected": false
+        },
+        {
+          "elapsedMs": 235,
+          "type": "sent",
+          "messageType": "update",
+          "command": "listDevice",
+          "virtualInputSelected": true,
+          "virtualOutputSelected": true
+        },
+        {
+          "elapsedMs": 235,
+          "type": "ack",
+          "bytes": 3
+        },
+        {
+          "elapsedMs": 235,
+          "type": "sent",
+          "messageType": "request",
+          "command": "listDevice"
+        },
+        {
+          "elapsedMs": 237,
+          "type": "ack",
+          "bytes": 3
+        },
+        {
+          "elapsedMs": 237,
+          "type": "received",
+          "messageType": "response",
+          "command": "listDevice",
+          "virtualInputSelected": true,
+          "virtualOutputSelected": true
+        }
+      ]
+    },
+    {
+      "raw_report": "/var/folders/_p/d216dxxn3h72cqwvrj6r206c0000gn/T/zca-call-trial-12pFym/events.json",
+      "executable": "/tmp/zalo-call-analysis/StandaloneZaloHelper.app/Contents/MacOS/ZaloCall",
+      "events": [
+        {
+          "elapsedMs": 1,
+          "type": "launch",
+          "executable": "/tmp/zalo-call-analysis/StandaloneZaloHelper.app/Contents/MacOS/ZaloCall",
+          "init": true
+        },
+        {
+          "elapsedMs": 1573,
+          "type": "connected",
+          "channel": "native-to-host"
+        },
+        {
+          "elapsedMs": 1573,
+          "type": "connected",
+          "channel": "host-to-native"
+        },
+        {
+          "elapsedMs": 1574,
+          "type": "received",
+          "messageType": "update",
+          "command": "native-ready"
+        },
+        {
+          "elapsedMs": 1574,
+          "type": "sent",
+          "messageType": "update",
+          "command": "init"
+        },
+        {
+          "elapsedMs": 1588,
+          "type": "ack",
+          "bytes": 3
+        },
+        {
+          "elapsedMs": 1588,
+          "type": "sent",
+          "messageType": "request",
+          "command": "listDevice"
+        },
+        {
+          "elapsedMs": 1716,
+          "type": "ack",
+          "bytes": 3
+        },
+        {
+          "elapsedMs": 1716,
+          "type": "received",
+          "messageType": "response",
+          "command": "listDevice",
+          "virtualInputSelected": false,
+          "virtualOutputSelected": false
+        },
+        {
+          "elapsedMs": 2380,
+          "type": "frida-error",
+          "error": "Error: Unable to access process with pid 3893 from the current user account"
+        }
+      ]
+    }
+  ],
+  "coreaudio_trial": {
+    "device": "Microsoft Teams Audio (virtual)",
+    "format": "Float32 mono 48000Hz",
+    "seconds": 2,
+    "create_status": 0,
+    "start_status": 0,
+    "input_samples": 96256,
+    "output_samples": 96256,
+    "input_rms": 0.07051913,
+    "input_peak": 0.1,
+    "tone440_amplitude": 0.09945894,
+    "control997_amplitude": 8.27e-06
+  },
+  "limitations": [
+    "No authenticated call or remote audio tested",
+    "One virtual device used only for local loopback; full duplex calls need two isolated buses",
+    "No native code decompilation or media protocol reconstruction",
+    "Frida attach denied; no PCM hooks installed"
+  ]
+}

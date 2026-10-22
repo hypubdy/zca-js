@@ -42,6 +42,7 @@ import { findUserByUsernameFactory } from "./apis/findUserByUsername.js";
 import { forwardMessageFactory } from "./apis/forwardMessage.js";
 import { getAliasListFactory } from "./apis/getAliasList.js";
 import { getAllFriendsFactory } from "./apis/getAllFriends.js";
+import { voiceCallFactory } from "./apis/voiceCall.js";
 import { getAllGroupsFactory } from "./apis/getAllGroups.js";
 import { getArchivedChatListFactory } from "./apis/getArchivedChatList.js";
 import { getAutoDeleteChatFactory } from "./apis/getAutoDeleteChat.js";
@@ -203,6 +204,7 @@ export class API {
     public forwardMessage: ReturnType<typeof forwardMessageFactory>;
     public getAliasList: ReturnType<typeof getAliasListFactory>;
     public getAllFriends: ReturnType<typeof getAllFriendsFactory>;
+    public voiceCall: ReturnType<typeof voiceCallFactory>;
     public getAllGroups: ReturnType<typeof getAllGroupsFactory>;
     public getArchivedChatList: ReturnType<typeof getArchivedChatListFactory>;
     public getAutoDeleteChat: ReturnType<typeof getAutoDeleteChatFactory>;
@@ -364,6 +366,7 @@ export class API {
         this.forwardMessage = forwardMessageFactory(ctx, this);
         this.getAliasList = getAliasListFactory(ctx, this);
         this.getAllFriends = getAllFriendsFactory(ctx, this);
+        this.voiceCall = voiceCallFactory(ctx, this);
         this.getAllGroups = getAllGroupsFactory(ctx, this);
         this.getArchivedChatList = getArchivedChatListFactory(ctx, this);
         this.getAutoDeleteChat = getAutoDeleteChatFactory(ctx, this);

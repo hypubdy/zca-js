@@ -1,0 +1,70 @@
+{
+  "version": "26.10.20",
+  "artifact": "/Applications/Zalo.app/Contents/Resources/app.asar",
+  "artifact_sha256": "ebb10234e499eb9046663a26f4ee70e9c29f53e0a7f0a186117b307872b6b0b1",
+  "module": "pc-dist/lazy/default-login-main-startup-shared-worker-znotification.d9141cdf23123a5c2330.js",
+  "module_sha256": "0a5a08a2a1d074c827d2b1826f8434fc04e243a1daa0a03a376353e54cdd2466",
+  "offset_unit": "Unicode code points in decoded UTF-8 source",
+  "observations": [
+    {
+      "symbol": "desktopMakeCall",
+      "offset": 7089569,
+      "length": 849,
+      "source": "makeCall(e,t,n,a,s){if(!(R.b.getStateNetwork()===R.a.CONNECTED)){const e=l.default.str(\"STR_NO_NETWORK_1\")+\"\\r\\n\"+l.default.str(\"STR_NO_NETWORK_2\");return void u.default.createError(e)}if(!this.canUseIpcCall())return void this.logError(\"makeCall: not supported\");if(n&&!A.default.enable_group_call_for_user)return void this.logError(\"makeCall with disabled feature\");this.callbackGenerateMessage=a;const i=T.default.getUidMe(),o=e.reduce(((e,t)=>{if(t===i)return e;const n=T.default.getMiniInfo(t);return e.push({id:t,avatar:n.avatar,name:n.dName}),e}),[]);let r;this.lastedActionCallValue=t?te.VIDEO_CALL:te.AUDIO_CALL,r=n?t?6:5:t?3:1;const c={type:\"request\",command:\"makeCall\",data:{partner:o,type:r,groupInfo:s}};this.isFirstCall()&&(this.setIsFirstCall(!1),c.data.isFirstCall=!0),this.logInfo(\"makeCall\",JSON.stringify(c)),this._sendToNative(c)}"
+    },
+    {
+      "symbol": "requestCallAndSendRequestCallSignalDispatch",
+      "offset": 7081225,
+      "length": 290,
+      "source": "handleSendSignal(e,t,n){let a,s;switch(this.logInfo(\"call-send-signal\",JSON.stringify(n)),t){case 401:a=o.default.requestCall(n.calleeId,n.callId,n.codec,n.type);break;case 416:a=o.default.sendRequestCall(n.calleeId,n.rtcpAddress,n.rtpAddress,n.codec,n.extendData,n.session,n.callId);break;"
+    },
+    {
+      "symbol": "requestCall",
+      "offset": 12192804,
+      "length": 308,
+      "source": "static requestCall(e,t,n,a){let s=p.b.getVoiceCallDomain()+\"/api/voicecall/requestcall?\"+this._getCommonParams(),i={calleeId:e,callId:t,codec:null!=n?n:\"[]\",typeRequest:a,imei:P.a.getZaloClientID()};return i=JSON.stringify(i),s=s+\"&params=\"+encodeURIComponent(o.default.encodeAES(i)),this._get(s,null,11300)}"
+    },
+    {
+      "symbol": "sendRequestCall",
+      "offset": 12193112,
+      "length": 359,
+      "source": "static sendRequestCall(e,t,n,a,s,i,r){let l=p.b.getVoiceCallDomain()+\"/api/voicecall/request?\"+this._getCommonParams(),c={calleeId:e,rtcpAddress:t,rtpAddress:n,codec:a,session:i,callId:r,imei:P.a.getZaloClientID()};return s&&(c.extendData=s,c.subCommand=3),c=JSON.stringify(c),l=l+\"&params=\"+encodeURIComponent(o.default.encodeAES(c)),this._get(l,null,11301)}"
+    },
+    {
+      "symbol": "sendRingRingCall",
+      "offset": 12193471,
+      "length": 276,
+      "source": "static sendRingRingCall(e,t){let n=p.b.getVoiceCallDomain()+\"/api/voicecall/ringring?\"+this._getCommonParams(),a={callerId:e,callId:t,status:0,imei:P.a.getZaloClientID()};return n=n+\"&params=\"+encodeURIComponent(o.default.encodeAES(JSON.stringify(a))),this._get(n,null,11302)}"
+    },
+    {
+      "symbol": "sendAnswerCall",
+      "offset": 12193747,
+      "length": 344,
+      "source": "static sendAnswerCall(e,t,n,a,s,i,r,l){let c=p.b.getVoiceCallDomain()+\"/api/voicecall/answer?\"+this._getCommonParams(),d={callerId:e,callId:t,status:n,codec:a||\"\",rtcpAddress:i,rtpAddress:r,session_id:l};return s&&(d.extendData=s,d.subCommand=3),c=c+\"&params=\"+encodeURIComponent(o.default.encodeAES(JSON.stringify(d))),this._get(c,null,11303)}"
+    },
+    {
+      "symbol": "sendAnswerACKCall",
+      "offset": 12194091,
+      "length": 278,
+      "source": "static sendAnswerACKCall(e,t){let n=p.b.getVoiceCallDomain()+\"/api/voicecall/answerack?\"+this._getCommonParams(),a={calleeId:e,callId:t,status:0,imei:P.a.getZaloClientID()};return n=n+\"&params=\"+encodeURIComponent(o.default.encodeAES(JSON.stringify(a))),this._get(n,null,11304)}"
+    },
+    {
+      "symbol": "sendCancelCall",
+      "offset": 12194369,
+      "length": 285,
+      "source": "static sendCancelCall(e,t,n){let a=p.b.getVoiceCallDomain()+\"/api/voicecall/cancel?\"+this._getCommonParams(),s={callerId:e,callId:t,callType:n,status:0,imei:P.a.getZaloClientID()};return a=a+\"&params=\"+encodeURIComponent(o.default.encodeAES(JSON.stringify(s))),this._get(a,null,11305)}"
+    },
+    {
+      "symbol": "sendEndCall",
+      "offset": 12194654,
+      "length": 267,
+      "source": "static sendEndCall(e,t){let n=p.b.getVoiceCallDomain()+\"/api/voicecall/endcall?\"+this._getCommonParams(),a={uidTo:e,callId:t,status:3,imei:P.a.getZaloClientID()};return n=n+\"&params=\"+encodeURIComponent(o.default.encodeAES(JSON.stringify(a))),this._get(n,null,11306)}"
+    },
+    {
+      "symbol": "handleControl",
+      "offset": 7086832,
+      "length": 628,
+      "source": "handleControl(e){if(!e)return;if(this.isIncomingCallEvent(e)&&this.isStopReceivingIncomingCall())return;if(this.logInfo(\"call-control\"),e&&e.data&&e.data.ts&&d.default.getTimeNow()-Number.parseInt(e.data.ts)>6e4)return void this.logError(\"call-control dropping\");if(this.isIncomingCallEvent(e)){let t=null;this.isCalling()&&(t=\"zalo\"),e=Object(s.a)(Object(s.a)({},e),{},{inCallStatus:t})}const t={type:\"control\",data:e};if(this._sendToNative(t),e&&e.data&&\"voip\"===e.act_type)switch(e.act){case\"request\":case\"answer\":case\"group_request\":case\"group_answer\":f.b.updateLastActionTime(e.data.uidN,this.dispatch,e.data.ts,f.a.CALL)}}"
+    }
+  ]
+}
