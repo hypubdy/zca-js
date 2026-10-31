@@ -1,7 +1,8 @@
 import { isIP } from "node:net";
-import { buildZrtcAcceptedAnswer, parseZrtcIncomingOffer, parseZrtcOutgoingAnswer } from "../../dist/call/negotiation.js";
+import { writeFileSync } from "node:fs";
+import { buildZrtcAcceptedAnswer, buildZrtcVideoCapabilities, parseZrtcIncomingOffer, parseZrtcOutgoingAnswer } from "../../dist/call/negotiation.js";
 import { probeZrtpRelay, ZrtpRelaySession } from "../../dist/call/relayRegistration.js";
-import { buildCompoundRtcpReport, parseCompoundRtcp, parseRtpPacket, RtpAudioSender, RtpReceptionStats, SrtcpContext, SrtpRtpContext, selectZrtcSrtpKey } from "../../dist/call/index.js";
+import { buildCompoundRtcpPli, buildCompoundRtcpReport, parseCompoundRtcp, parseRtpPacket, RtpAudioSender, RtpReceptionStats, SrtcpContext, SrtpRtpContext, VideoRtpBridge, selectZrtcSrtpKey } from "../../dist/call/index.js";
 import { selectNativeOpusCodec, ZrtcOpusGateway } from "./opus-gateway.mjs";
 import { randomInt } from "node:crypto";
 import { safeCallError } from "./outgoing-diagnostics.mjs";
@@ -61,6 +62,7 @@ function safeOfferDiagnostics(offer) {
         videoEnable: offer.videoEnable ?? null,
         videoCodecId: offer.videoCodecId ?? null,
         videoCodecIds: offer.videoCodecIds ?? [],
+        videoCodecs: offer.videoCodecs ?? [],
         extendData: safeCapabilities(extendData),
         zrtcConfig: safeCapabilities(offer.zrtcConfig),
     };
@@ -69,7 +71,7 @@ function safeOfferDiagnostics(offer) {
 export class IndependentCall {
     constructor(notify) { this.notify = notify; this.openRelay = (...args) => ZrtpRelaySession.open(...args); }
     activeCall() { return this.pending?.offer || (this.outgoing ? { uidN: this.outgoing.calleeId,
-        callId: this.outgoing.callId, direction: "outgoing", stage: this.outgoing.stage } : null); }
+        callId: this.outgoing.callId, callType: this.outgoing.callType ?? 1, direction: "outgoing", stage: this.outgoing.stage } : null); }
     status() {
         return { engine: "independent", nativeEngine: false, mediaReady: false, browserBridgeAvailable: Boolean((this.relay?.registered || this.outgoing?.relay?.registered) && this.opus && this.srtpSend &&
             (this.srtcpEnabled === false || (this.srtcpSend && this.srtcpReceive))), relayConnectAvailable: true,
@@ -92,9 +94,48 @@ export class IndependentCall {
             codecs: this.pending?.offer.codecs.map(item => ({ name: item.name, payload: item.payload })) || [],
             mediaDiagnostics: { ...(this.mediaDiagnostics || {}) },
             lastMediaDiagnostics: { ...(this.lastMediaDiagnostics || {}) },
-            videoCallTrialAvailable: false,
+            lastVideoDiagnostics: { ...(this.lastVideoDiagnostics || {}) },
+            videoRelayRtpPackets: this.videoRelayRtpPackets || 0,
+            videoRelayRtcpPackets: this.videoRelayRtcpPackets || 0,
+            videoPliSent: this.videoPliSent || 0,
+            videoRtcpReportsSent: this.videoRtcpReportsSent || 0,
+            videoCameraStateSent: this.videoCameraStateSent || 0,
+            videoCameraOnSignalsSent: this.videoCameraOnSignalsSent || 0,
+            videoCallTrialAvailable: Boolean(this.pending?.offer.videoRequested === true && this.videoBridge && !this.answerSignalSent),
+            videoBridgeReady: Boolean(this.videoBridge),
+            videoCodec: this.videoPayloadType ?? null,
+            videoSentPayloadType: this.videoBridge?.sentPayloadType ?? this.videoSentPayloadType ?? null,
+            videoPacketFormat: this.videoBridge?.packetFormatName ?? this.videoPacketFormatOverride ?? null,
+            videoExtensions: this.videoBridge?.extensionsEnabled ?? this.videoExtensionsOverride ?? null,
+            incompleteAccessUnits: this.videoBridge?.incompleteAccessUnits ?? 0,
+            answerPacketMode: this.outgoingAnswerPacketMode ?? null,
+            videoPacketMode: this.pending?.offer?.zrtcConfig?.packetMode ?? this.outgoing?.preflight?.zrtcConfig?.packetMode ?? null,
+            videoPacketsSent: this.videoBridge?.sentPackets ?? 0,
+            videoFramesSent: this.videoBridge?.sentFrames ?? 0,
+            videoKeyFramesSent: this.videoBridge?.sentKeyFrames ?? 0,
+            videoPacketsReceived: this.videoBridge?.receivedPackets ?? 0,
+            videoFramesReceived: this.videoBridge?.receivedFrames ?? 0,
+            videoKeyFramesReceived: this.videoBridge?.receivedKeyFrames ?? 0,
+            videoPacketsRejected: this.videoBridge?.rejectedPackets ?? 0,
+            videoFrameBytes: { sent: this.videoBridge?.sentFrameBytes ?? 0,
+                received: this.videoBridge?.receivedFrameBytes ?? 0,
+                min: this.videoBridge?.receivedFrameMinBytes ?? 0,
+                max: this.videoBridge?.receivedFrameMaxBytes ?? 0 },
+            videoAuxiliaryPackets: this.videoBridge?.auxiliaryPackets ?? 0,
+            videoRejectReasons: { ...(this.videoBridge?.rejectionReasons || {}) },
+            videoObservedSsrcs: { ...(this.videoBridge?.observedSsrcs || {}) },
+            videoObservedPayloadTypes: { ...(this.videoBridge?.observedPayloadTypes || {}) },
+            videoObservedPayloadFirstBytes: { ...(this.videoBridge?.observedPayloadFirstBytes || {}) },
+            videoObservedExtensionProfiles: { ...(this.videoBridge?.observedExtensionProfiles || {}) },
+            videoObservedExtensionElements: { ...(this.videoBridge?.observedExtensionElements || {}) },
+            videoObservedExtensionSamples: { ...(this.videoBridge?.observedExtensionSamples || {}) },
+            videoSentH264NalTypes: { ...(this.videoBridge?.sentH264NalTypes || {}) },
+            videoSentH264NalSamples: { ...(this.videoBridge?.sentH264NalSamples || {}) },
+            videoReceivedH264NalTypes: { ...(this.videoBridge?.receivedH264NalTypes || {}) },
+            videoReceivedH264NalSamples: { ...(this.videoBridge?.receivedH264NalSamples || {}) },
+            videoLastRejection: this.videoBridge?.lastRejection || null,
             limitation: this.pending?.offer.videoRequested === true
-                ? "Offer yêu cầu video nhưng video encoder/decoder và answer negotiation chưa được xác minh; chưa bật answer."
+                ? (this.videoBridge ? "Video bridge H264/SRTP đã sẵn sàng; answer chỉ xác nhận sau ACK của peer." : "Offer video chưa có H264 payload dạng name/payload để mở bridge.")
                 : "Answer trial cần người dùng bấm sau khi chuẩn bị audio; media chỉ confirmed sau answer ACK của peer." };
     }
     observe(event) {
@@ -143,6 +184,15 @@ export class IndependentCall {
             const callId = data.callId ?? data.call_id ?? data.id;
             if (callId !== undefined && String(callId) === String(this.pending.offer.callId)) {
                 this.confirmed = true;
+                this.videoBridge?.setConfirmed(true);
+                if (this.videoBridge && this.relay?.registered) {
+                    this.relay.sendLocalCameraState(true, 0);
+                    this.videoCameraOnSignalsSent = (this.videoCameraOnSignalsSent || 0) + 1;
+                    this.relay.sendVideoSuspend(false, 0);
+                    this.videoCameraStateSent = (this.videoCameraStateSent || 0) + 1;
+                    this.notify("independent-video-camera-state", { enabled: true, direction: "incoming",
+                        localCameraSignalsSent: this.videoCameraOnSignalsSent, suspendSignalsSent: this.videoCameraStateSent });
+                }
                 this.notify("independent-confirmed", { confirmed: true });
             }
         }
@@ -150,9 +200,59 @@ export class IndependentCall {
     }
     clear(sendEnd = false) { this.pending = null; this.clearRelay(sendEnd); this.outgoing = null; this.notify("independent-state", this.status()); }
     clearRelay(sendEnd = true) {
+        if (this.videoBridge) {
+            this.lastVideoDiagnostics = {
+                direction: this.videoDirection || "unknown",
+                packetMode: this.videoPacketMode ?? null,
+                sentPayloadType: this.videoSentPayloadType ?? null,
+                receivePayloadType: this.videoBridge?.receivePayloadType ?? null,
+                relayRtpPackets: this.videoRelayRtpPackets || 0,
+                relayRtcpPackets: this.videoRelayRtcpPackets || 0,
+                pliSent: this.videoPliSent || 0,
+                rtcpReportsSent: this.videoRtcpReportsSent || 0,
+                cameraOnSignalsSent: this.videoCameraOnSignalsSent || 0,
+                suspendSignalsSent: this.videoCameraStateSent || 0,
+                rtpPacketsSent: this.videoBridge.sentPackets,
+                framesSent: this.videoBridge.sentFrames,
+                keyFramesSent: this.videoBridge.sentKeyFrames,
+                rtpPacketsAccepted: this.videoBridge.receivedPackets,
+                framesReceived: this.videoBridge.receivedFrames,
+                keyFramesReceived: this.videoBridge.receivedKeyFrames,
+                rtpPacketsRejected: this.videoBridge.rejectedPackets,
+                auxiliaryPackets: this.videoBridge.auxiliaryPackets,
+                frameBytes: { sent: this.videoBridge.sentFrameBytes, received: this.videoBridge.receivedFrameBytes,
+                    min: this.videoBridge.receivedFrameMinBytes, max: this.videoBridge.receivedFrameMaxBytes },
+                rejectReasons: { ...this.videoBridge.rejectionReasons },
+                payloadTypes: { ...this.videoBridge.observedPayloadTypes },
+                payloadFirstBytes: { ...this.videoBridge.observedPayloadFirstBytes },
+                extensionProfiles: { ...this.videoBridge.observedExtensionProfiles },
+                extensionElements: { ...this.videoBridge.observedExtensionElements },
+                extensionSamples: { ...this.videoBridge.observedExtensionSamples },
+                sentH264NalTypes: { ...this.videoBridge.sentH264NalTypes },
+                sentH264NalSamples: { ...this.videoBridge.sentH264NalSamples },
+                receivedH264NalTypes: { ...this.videoBridge.receivedH264NalTypes },
+                receivedH264NalSamples: { ...this.videoBridge.receivedH264NalSamples },
+                ssrcs: { ...this.videoBridge.observedSsrcs },
+                endedAt: Date.now(),
+            };
+        }
+        this.videoBridge?.close();
+        this.videoBridge = undefined;
+        this.videoPayloadType = undefined;
+        this.videoPacketMode = undefined;
+        this.videoDirection = undefined;
+        this.videoRelayRtpPackets = 0;
+        this.videoRelayRtcpPackets = 0;
+        this.videoPliSent = 0;
+        this.videoRtcpReportsSent = 0;
+        this.videoCameraStateSent = 0;
+        this.videoCameraOnSignalsSent = 0;
+        this.videoSrtcpSend?.destroy(); this.videoSrtcpSend = undefined;
+        this.videoSrtcpReceive?.destroy(); this.videoSrtcpReceive = undefined;
         if (this.mediaDiagnostics) {
             this.lastMediaDiagnostics = { ...this.mediaDiagnostics, endedAt: Date.now() };
-            this.notify("independent-call-ended", { mediaDiagnostics: { ...this.lastMediaDiagnostics } });
+            this.notify("independent-call-ended", { mediaDiagnostics: { ...this.lastMediaDiagnostics },
+                videoDiagnostics: { ...(this.lastVideoDiagnostics || {}) } });
         }
         const relay = this.relay || this.outgoing?.relay;
         this.relay = null;
@@ -178,6 +278,7 @@ export class IndependentCall {
         this.mediaDiagnostics = undefined;
         this.offerDiagnostics = undefined;
         this.lastMediaDiagnosticAt = 0;
+        this.lastVideoDiagnosticAt = 0;
         this.relayTask = undefined;
         if (this.mediaDiagnosticsTimer) clearInterval(this.mediaDiagnosticsTimer);
         this.mediaDiagnosticsTimer = undefined;
@@ -190,9 +291,10 @@ export class IndependentCall {
         return operation;
     }
     /** Prepare the known audio subset and register a caller relay from 401. */
-    async registerOutgoingRelay(preflight, calleeId) {
+    async registerOutgoingRelay(preflight, calleeId, callType = 1) {
         if (this.pending || this.outgoing || this.relay?.registered)
             throw new Error("Đang có cuộc gọi khác; kết thúc trước khi thử gọi đi");
+        if (![1, 3].includes(callType)) throw new Error("Outgoing callType phải là 1 (audio) hoặc 3 (video)");
         if (!preflight || preflight.status !== 0 || !Array.isArray(preflight.servers) || !preflight.servers.length)
             throw new Error("Preflight không có relay candidate hợp lệ");
         const asNativeUint32 = (value, name) => {
@@ -211,12 +313,16 @@ export class IndependentCall {
         if (localConfig.srtpNoSeq || localConfig.noSeq) throw new Error("Caller trial chưa hỗ trợ srtpNoSeq");
         const codecInfo = { name: "opus/16000/1", payload: 112, frmPtime: 20, dynamicFptime: 0 };
         const codec = selectNativeOpusCodec([codecInfo]);
-        const capabilities = {
-            callType: 0, newZrtc: Number.isInteger(localConfig.newZrtc) ? localConfig.newZrtc : 0,
-            platform: 2, packetMode: Number.isInteger(localConfig.packetMode) ? localConfig.packetMode : 2,
-            gccMode: 0, srtpMode: localConfig.srtpMode, sP2P: 0, srtcp: 0,
-            gccAudio: 0, gccSVLR: 0, tpType: 0, spTcp: 0, gccEarlyCall: 0,
-        };
+        const capabilities = callType === 3
+            ? buildZrtcVideoCapabilities({ srtpMode: localConfig.srtpMode, srtcp: 0,
+                packetMode: Number.isInteger(localConfig.packetMode) ? localConfig.packetMode : 2,
+                newZrtc: localConfig.newZrtc })
+            : {
+                callType: 0, newZrtc: Number.isInteger(localConfig.newZrtc) ? localConfig.newZrtc : 0,
+                platform: 2, packetMode: Number.isInteger(localConfig.packetMode) ? localConfig.packetMode : 2,
+                gccMode: 0, srtpMode: localConfig.srtpMode, sP2P: 0, srtcp: 0,
+                gccAudio: 0, gccSVLR: 0, tpType: 0, spTcp: 0, gccEarlyCall: 0,
+            };
         const mediaOffer = { uidTo: preflight.fromId, uidFrom: preflight.toId,
             sessionId: preflight.sessionId, zrtcConfig: localConfig, extendData: JSON.stringify(capabilities) };
         const opus = new ZrtcOpusGateway(codec);
@@ -249,10 +355,11 @@ export class IndependentCall {
                 });
                 this.outgoing = { callId: preflight.callId, calleeId: String(calleeId), preflight, relay,
                     candidate: { address: host, port, rtpAddress: candidate.rtpAddress, rtcpAddress: candidate.rtcpAddress },
-                    codecInfo, capabilities, stage: "relay-registered", at: Date.now() };
+                    codecInfo, capabilities, callType, stage: "relay-registered", at: Date.now() };
                 this.relay = relay;
                 this.opus = opus;
                 this.installRtpSecurity(mediaSecurity);
+                if (callType === 3) this.prepareVideoBridge(97, this.asNativeUint32(preflight.fromId), this.asNativeUint32(preflight.toId), localConfig.packetMode);
                 this.mediaDiagnostics = {
                     relayAudio: 0, relayRtcp: 0, invalidHeader: 0, wrongPayloadType: 0,
                     wrongSsrc: 0, srtpAuthenticated: 0, srtpRejected: 0, invalidRtp: 0,
@@ -288,7 +395,13 @@ export class IndependentCall {
         return { calleeId: outgoing.calleeId, callId: String(outgoing.callId),
             rtpAddress: outgoing.candidate.rtpAddress, rtcpAddress: outgoing.candidate.rtcpAddress,
             codec: JSON.stringify([outgoing.codecInfo]), session: outgoing.preflight.sessionId,
-            extendData: JSON.stringify(outgoing.capabilities) };
+            extendData: JSON.stringify(outgoing.capabilities),
+            // Native callers also send params.video.enable, but a live test on
+            // 2026-10-25 showed the peer changing its inbound stream shape when
+            // this field appeared, which broke the previously working receive
+            // path. Keep it opt-in until the peer behavior is understood.
+            ...(outgoing.callType === 3 && process.env.VIDEO_REQUEST_PARAMS === "1"
+                ? { video: { enable: 1 } } : {}) };
     }
     beginOutgoingRequest() {
         if (!this.outgoing || this.outgoing.stage !== "relay-registered") throw new Error("Caller chưa ở phase relay-registered");
@@ -310,11 +423,26 @@ export class IndependentCall {
         const codec = selectNativeOpusCodec(outgoing.answer.codecs);
         if (codec.name !== this.codec?.name || codec.payloadType !== this.codec?.payloadType)
             throw new Error("Answer chọn codec khác caller codec đang chuẩn bị");
+        const answerCapabilities = outgoing.answer.extendData ? JSON.parse(outgoing.answer.extendData) : {};
+        if (!answerCapabilities || typeof answerCapabilities !== "object" || Array.isArray(answerCapabilities))
+            throw new Error("Answer extendData không phải object");
+        const configuredPacketMode = Number.isInteger(outgoing.preflight.zrtcConfig?.packetMode) && outgoing.preflight.zrtcConfig.packetMode >= 1
+            ? outgoing.preflight.zrtcConfig.packetMode : 2;
+        // The receiving side selects its depacketizer from *its own* packetMode,
+        // which the answer reports. Adopt that value instead of forcing ours.
+        this.outgoingAnswerPacketMode = Number.isInteger(answerCapabilities.packetMode)
+            ? answerCapabilities.packetMode : null;
+        const packetMode = this.outgoingAnswerPacketMode ?? configuredPacketMode;
+        const answerVideoCodecs = Array.isArray(answerCapabilities.video?.codec)
+            ? answerCapabilities.video.codec.filter(item => item && typeof item === "object" &&
+                typeof item.name === "string" && Number.isInteger(item.payload)) : [];
+        const videoPayload = answerVideoCodecs.find(item => item.name.toLowerCase() === "h264")?.payload ?? 97;
         const offer = { uidTo: outgoing.preflight.fromId, uidFrom: outgoing.preflight.toId,
             sessionId: outgoing.preflight.sessionId, zrtcConfig: outgoing.preflight.zrtcConfig,
             extendData: outgoing.answer.extendData || "{}" };
         const security = this.prepareRtpSecurity(offer, codec);
         this.installRtpSecurity(security);
+        if (outgoing.callType === 3) this.prepareVideoBridge(videoPayload, this.asNativeUint32(outgoing.preflight.fromId), this.asNativeUint32(outgoing.preflight.toId), packetMode);
         outgoing.stage = "answer-media-ready";
         return { callId: outgoing.callId, calleeId: outgoing.calleeId };
     }
@@ -322,6 +450,15 @@ export class IndependentCall {
         if (!this.outgoing || this.outgoing.callId !== callId || this.outgoing.stage !== "answer-media-ready")
             throw new Error("Outgoing answer ACK không khớp media-ready call");
         this.confirmed = true;
+        this.videoBridge?.setConfirmed(true);
+        if (this.videoBridge && this.relay?.registered) {
+            this.relay.sendLocalCameraState(true, 0);
+            this.videoCameraOnSignalsSent = (this.videoCameraOnSignalsSent || 0) + 1;
+            this.relay.sendVideoSuspend(false, 0);
+            this.videoCameraStateSent = (this.videoCameraStateSent || 0) + 1;
+            this.notify("independent-video-camera-state", { callId, enabled: true, direction: "outgoing",
+                localCameraSignalsSent: this.videoCameraOnSignalsSent, suspendSignalsSent: this.videoCameraStateSent });
+        }
         this.outgoing.stage = "confirmed";
         this.notify("independent-confirmed", { callId, confirmed: true, direction: "outgoing" });
         this.notify("independent-state", this.status());
@@ -373,6 +510,11 @@ export class IndependentCall {
         this.opus?.close();
         this.opus = opus;
         if (mediaSecurity) this.installRtpSecurity(mediaSecurity);
+        if (offer.videoRequested === true) {
+            const videoPayload = offer.videoCodecs?.find(item => item.name.toLowerCase() === "h264")?.payload;
+            if (videoPayload === undefined) throw new Error("Offer video chưa có payload H264 dạng name/payload");
+            this.prepareVideoBridge(videoPayload, this.asNativeUint32(offer.uidTo), this.asNativeUint32(offer.uidFrom), offer.zrtcConfig?.packetMode);
+        }
         const summary = { registered: true, codecReady: true, srtpRtpReady: Boolean(this.srtpSend), srtcpReady: this.srtcpEnabled === false || Boolean(this.srtcpSend && this.srtcpReceive), codec: codec.name,
             mediaReady: false, persistentSocket: true, keepaliveMs: 6000 };
         this.receiveCount = 0;
@@ -394,7 +536,8 @@ export class IndependentCall {
         const offer = this.pending?.offer;
         if (!offer || !this.relay?.registered || !this.opus || !this.codec || !this.srtpSend)
             throw new Error("Cần offer, relay, codec và RTP/SRTP trước khi thử answer");
-        if (offer.videoRequested === true) throw new Error("Offer yêu cầu video; video chưa được thương lượng và kiểm thử nên chưa thể answer");
+        if (offer.videoRequested === true && (!this.videoBridge || !offer.videoCodecs?.some(item => item.name.toLowerCase() === "h264")))
+            throw new Error("Offer video chưa có H264 payload hoặc video bridge");
         if (this.answerSignalSent) throw new Error("Answer đã gửi; đang chờ ACK của peer");
         if (this.srtpProfile !== 1 || this.srtcpEnabled !== false)
             throw new Error("Answer trial hiện chỉ hỗ trợ SRTP profile1 với RTCP clear đã khớp");
@@ -410,8 +553,10 @@ export class IndependentCall {
         const relayAddress = `${endpoint.address.includes(":") ? `[${endpoint.address}]` : endpoint.address}:${endpoint.port}`;
         // Explicit, conservative capability candidate: advertise only relay UDP,
         // profile1 RTP SRTP and the negotiated clear-RTCP path implemented here.
-        const capabilities = { packetMode, srtpMode: this.srtpProfile, srtcp: 0, sP2P: 0,
-            gccMode: 0, gccAudio: false, gccSVLR: false, gccEarlyCall: false, tpType: 0, spTcp: 0 };
+        const capabilities = offer.videoRequested === true
+            ? buildZrtcVideoCapabilities({ srtpMode: this.srtpProfile, srtcp: 0, packetMode })
+            : { packetMode, srtpMode: this.srtpProfile, srtcp: 0, sP2P: 0,
+                gccMode: 0, gccAudio: false, gccSVLR: false, gccEarlyCall: false, tpType: 0, spTcp: 0 };
         return buildZrtcAcceptedAnswer({ offer, codecs: [selected], rtpAddress: relayAddress,
             rtcpAddress: relayAddress, capabilities });
     }
@@ -483,6 +628,129 @@ export class IndependentCall {
         if (!Number.isInteger(number) || number < -2147483648 || number > 0xffffffff) throw new Error("ID relay ngoài phạm vi uint32 native");
         return number >>> 0;
     }
+    prepareVideoBridge(payloadType, localSsrc, remoteSsrc, packetMode) {
+        if (!this.masterKeySalt || !this.relay?.registered || !this.srtpProfile)
+            throw new Error("Video SRTP chưa có relay/key/profile");
+        this.videoBridge?.close();
+        const initialSequenceNumber = randomInt(1, 0x8000);
+        const protect = new SrtpRtpContext({ masterKeySalt: this.masterKeySalt, profile: this.srtpProfile, direction: "send", ssrc: localSsrc, initialRoc: 0, initialSequenceNumber });
+        const unprotect = new SrtpRtpContext({ masterKeySalt: this.masterKeySalt, profile: this.srtpProfile, direction: "receive", ssrc: remoteSsrc, initialRoc: 0, initialSequenceNumber: 0 });
+        const makeVideoUnprotect = (ssrc, sequenceNumber) => new SrtpRtpContext({ masterKeySalt: this.masterKeySalt, profile: this.srtpProfile, direction: "receive", ssrc, initialRoc: 0, initialSequenceNumber: sequenceNumber });
+        this.videoBridge = new VideoRtpBridge({ relay: this.relay, codec: "h264", payloadType, packetMode,
+            // The peer sends no RTP header extensions. Emit the native
+            // RapidSync/SVC block only when explicitly comparing with Zalo PC.
+            extensions: this.videoExtensionsOverride ?? process.env.VIDEO_RTP_EXTENSIONS === "1",
+            // Live packetMode-2 peers address every NAL with its Annex-B start
+            // code. "balanced" reproduces the native packetMode-1 splitter.
+            packetFormat: this.videoPacketFormatOverride
+                ?? (process.env.VIDEO_PACKETIZATION === "balanced" ? "balanced"
+                    : process.env.VIDEO_PACKETIZATION === "rfc6184" ? "rfc6184" : "nal"),
+            // Live Zalo video calls use PT97 and PT98 in the same authenticated
+            // SSRC/sequence space. Native registers every candidate receive
+            // codec, so retain both candidate payloads plus its legacy PT100.
+            receivePayloadTypes: [...new Set([payloadType, 97, 98, 100])], localSsrc, remoteSsrc, initialSequenceNumber, protect, unprotect, unprotectFactory: makeVideoUnprotect,
+            onFrame: frame => {
+                this.onDecodedVideo?.(frame);
+                // Opt-in diagnostic: keep the first keyframes so they can be
+                // decoded offline when a live peer renders black.
+                if (process.env.VIDEO_DUMP_DIR && frame.keyFrame) {
+                    this.videoDumpCount = (this.videoDumpCount || 0) + 1;
+                    if (this.videoDumpCount <= 3) {
+                        try { writeFileSync(`${process.env.VIDEO_DUMP_DIR}/in-key-${this.videoDumpCount}.h264`, Buffer.from(frame.data)); }
+                        catch { /* diagnostic only */ }
+                    }
+                }
+                const encoded = Buffer.from(frame.data).toString("base64");
+                if (encoded.length <= 12 * 1024 * 1024)
+                    this.notify("independent-video-frame", { timestamp: frame.timestamp, keyFrame: frame.keyFrame, codec: frame.codec || this.videoBridge?.receiveCodec || "h264", frameLength: frame.data.length, frame: encoded });
+            } });
+        this.videoBridge.setConfirmed(this.confirmed === true);
+        this.videoPacketMode = packetMode;
+        this.videoSentPayloadType = payloadType;
+        this.videoLocalSsrc = localSsrc;
+        this.videoRemoteSsrc = remoteSsrc;
+        this.videoNegotiatedPacketMode = packetMode;
+        this.videoDirection = this.outgoing ? "outgoing" : "incoming";
+        this.videoRelayRtpPackets = 0;
+        this.videoRelayRtcpPackets = 0;
+        this.videoPliSent = 0;
+        this.videoRtcpReportsSent = 0;
+        this.videoCameraStateSent = 0;
+        this.videoCameraOnSignalsSent = 0;
+        this.videoSrtcpSend?.destroy(); this.videoSrtcpReceive?.destroy();
+        this.videoSrtcpSend = this.srtcpEnabled ? new SrtcpContext({ masterKeySalt: this.masterKeySalt, profile: this.srtpProfile, direction: "send" }) : null;
+        this.videoSrtcpReceive = this.srtcpEnabled ? new SrtcpContext({ masterKeySalt: this.masterKeySalt, profile: this.srtpProfile, direction: "receive" }) : null;
+        this.videoPayloadType = payloadType;
+        this.notify("independent-state", this.status());
+        return this.videoBridge;
+    }
+    /** Live A/B switch for the outgoing video packetization. */
+    setVideoFormat(format, extensions, payloadType) {
+        if (!["nal", "balanced", "rfc6184"].includes(format))
+            throw new Error("Video packet format phải là nal, balanced hoặc rfc6184");
+        this.videoPacketFormatOverride = format;
+        if (typeof extensions === "boolean") this.videoExtensionsOverride = extensions;
+        // Swap in place: recreating the bridge would reset SRTP/sequence and the
+        // peer would reject the new sequence space as replay.
+        if (this.videoBridge && this.confirmed)
+            this.videoBridge.setPacketFormat(format, this.videoExtensionsOverride, payloadType);
+        this.notify("independent-video-format", { format, extensions: this.videoExtensionsOverride, payloadType });
+        return { format, extensions: this.videoExtensionsOverride ?? null,
+            payloadType: this.videoBridge?.sentPayloadType ?? null, active: Boolean(this.videoBridge) };
+    }
+    sendVideoPli() {
+        if (!this.videoBridge || !this.relay?.registered || !this.masterKeySalt) throw new Error("Video bridge chưa sẵn sàng");
+        const senderSsrc = this.asNativeUint32(this.pending?.offer?.uidTo ?? this.outgoing?.preflight?.fromId ?? 0);
+        const mediaSsrc = this.asNativeUint32(this.videoBridge.remoteVideoSsrc ?? this.pending?.offer?.uidFrom ?? this.outgoing?.preflight?.toId ?? 0);
+        // ZaloCall uses compound RTCP. Mirror SR/RR + SDES + PLI rather than a
+        // reduced-size standalone PLI, which older receivers may discard. The
+        // native RTCPSender emits SR once this side has sent RTP.
+        const report = buildCompoundRtcpPli(senderSsrc, mediaSsrc, `zrtc-${senderSsrc}`,
+            this.videoSenderInfo(this.videoBridge));
+        this.relay.sendVideoRtcp(this.videoSrtcpSend ? this.videoSrtcpSend.protect(report) : report);
+        this.videoPliSent = (this.videoPliSent || 0) + 1;
+        this.notify("independent-video-pli", { sent: true });
+    }
+
+    videoSenderInfo(bridge) {
+        if (!bridge || !bridge.sentPackets) return undefined;
+        const now = Date.now();
+        return {
+            ntpSeconds: Math.floor(now / 1000) + 0x83aa7e80,
+            ntpFraction: Math.floor(((now % 1000) / 1000) * 0x100000000) >>> 0,
+            rtpTimestamp: bridge.lastSentTimestamp >>> 0,
+            packetCount: bridge.sentPackets,
+            octetCount: bridge.sentOctets,
+        };
+    }
+    sendVideoRtcpReport() {
+        if (this.confirmed !== true || !this.videoBridge || !this.relay?.registered) return false;
+        const senderSsrc = this.asNativeUint32(this.videoBridge.localVideoSsrc);
+        const block = this.videoBridge.buildReceptionReportBlock(Date.now());
+        // Native RTCPSender builds SR (not RR) while the video sender is active.
+        const report = buildCompoundRtcpReport({ ssrc: senderSsrc, cname: `zrtc-${senderSsrc}`,
+            reportBlocks: block ? [block] : [], senderInfo: this.videoSenderInfo(this.videoBridge) });
+        this.relay.sendVideoRtcp(this.videoSrtcpSend ? this.videoSrtcpSend.protect(report) : report);
+        this.videoRtcpReportsSent = (this.videoRtcpReportsSent || 0) + 1;
+        return true;
+    }
+
+    sendBrowserVideoFrame(frame, timestamp90k, keyFrame = false) {
+        if (!(frame instanceof Uint8Array) || !Number.isInteger(timestamp90k)) throw new TypeError("Encoded video frame and timestamp are required");
+        if (!this.videoBridge) throw new Error("Video RTP bridge chưa được chuẩn bị");
+        if (process.env.VIDEO_DUMP_DIR && keyFrame) {
+            this.outVideoDumpCount = (this.outVideoDumpCount || 0) + 1;
+            if (this.outVideoDumpCount <= 3) {
+                try { writeFileSync(`${process.env.VIDEO_DUMP_DIR}/out-key-${this.outVideoDumpCount}.h264`, Buffer.from(frame)); }
+                catch { /* diagnostic only */ }
+            }
+        }
+        const sent = this.videoBridge.sendFrame(frame, timestamp90k, keyFrame);
+        // The periodic diagnostics timer publishes counters; doing that for
+        // every video frame needlessly serializes the entire call state.
+        return sent;
+    }
+
     sendBrowserPcm(mono48k) {
         if (!this.relay?.registered || !this.opus || !this.srtpSend || !this.rtpSender)
             throw new Error("Relay/Opus/SRTP RTP chưa sẵn sàng");
@@ -531,6 +799,32 @@ export class IndependentCall {
     receiveRelayMedia(packet) {
         const diagnostic = this.mediaDiagnostics;
         if (!diagnostic) return;
+        if (packet.kind === "video") {
+            this.videoRelayRtpPackets = (this.videoRelayRtpPackets || 0) + 1;
+            if (!this.videoBridge) return;
+            this.videoBridge.receiveRtp(packet.payload);
+            const now = Date.now();
+            if (!this.lastVideoDiagnosticAt || now - this.lastVideoDiagnosticAt >= 1000) {
+                this.lastVideoDiagnosticAt = now;
+                this.notify("independent-video-media", { packetsReceived: this.videoBridge.receivedPackets, framesReceived: this.videoBridge.receivedFrames, keyFramesReceived: this.videoBridge.receivedKeyFrames, receiveCodec: this.videoBridge.receiveCodec, packetsRejected: this.videoBridge.rejectedPackets, rejectReasons: { ...this.videoBridge.rejectionReasons } });
+            }
+            return;
+        }
+        if (packet.kind === "videoRtcp") {
+            this.videoRelayRtcpPackets = (this.videoRelayRtcpPackets || 0) + 1;
+            if (!this.videoBridge) return;
+            try {
+                const clear = this.videoSrtcpReceive ? this.videoSrtcpReceive.unprotect(packet.payload) : packet.payload;
+                const summaries = parseCompoundRtcp(clear);
+                for (const summary of summaries) {
+                    if (summary.packetType === 206 && summary.count === 1)
+                        this.onVideoKeyFrameRequest?.(summary.mediaSsrc ?? null);
+                    if (summary.packetType === 200 && summary.senderInfo)
+                        this.videoBridge.noteSenderReport(summary.senderInfo.ntpSeconds, summary.senderInfo.ntpFraction, Date.now());
+                }
+            } catch { this.notify("independent-video-rtcp", { rejected: true }); }
+            return;
+        }
         if (packet.kind === "audioRtcp") {
             diagnostic.relayRtcp++;
             if (this.srtcpEnabled === undefined) return;
@@ -602,6 +896,10 @@ export class IndependentCall {
     reportMediaDiagnostics(force = false) {
         if (!this.mediaDiagnostics) return;
         const now = Date.now();
+        if (force && this.videoBridge && this.confirmed === true) {
+            try { this.sendVideoRtcpReport(); }
+            catch (error) { this.notify("independent-video-rtcp", { rejected: true, message: error?.message || "Không gửi được RTCP video" }); }
+        }
         const total = this.mediaDiagnostics.relayAudio + this.mediaDiagnostics.relayRtcp;
         if (!force && total !== 1 && total % 50 !== 0 && now - this.lastMediaDiagnosticAt < 2000) return;
         this.lastMediaDiagnosticAt = now;

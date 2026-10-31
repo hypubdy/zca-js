@@ -4,12 +4,12 @@ The default backend **does not use or start ZaloCall**, its IPC, its Mac UI,
 virtual devices or process taps. Historical native trial files remain in this
 directory for reference; they are not the current backend.
 
-**Real Zalo voice calling is not yet verified end to end.** The independent media
-leg now bridges browser WebRTC PCM through Opus, RTP/SRTP and the persistent
-relay socket, then routes authenticated decoded PCM back to browser speakers.
-The answer control remains disabled until the exact ZRTC capability and SRTCP
-requirements are supported. A successful relay registration or browser echo is
-not a successful Zalo call.
+The independent media leg bridges browser WebRTC PCM through Opus, RTP/SRTP and
+the persistent relay socket, then routes authenticated decoded PCM back to
+browser speakers. Audio has worked in a live Zalo call. Video signaling and
+relay packets have been observed in a live call, but two-way video rendering
+has not yet been verified. Incoming video answer requires an explicit H.264
+name/payload capability and a ready video bridge.
 
 From the repository root:
 
@@ -24,6 +24,35 @@ npm start
 Open http://localhost:4317. It binds only to127.0.0.1. Node22/24 and the native
 open-source `@roamhq/wrtc` addon are required; Zalo Desktop and Mac audio drivers
 are not required for the new backend. Build now compiles only the React UI.
+
+For a small integration UI built directly on `@zca-js/call-react`, open
+http://localhost:4317/simple. It contains only QR account linking, incoming
+answer/reject, a friend picker for outgoing calls, and hangup.
+
+The simple page displays the camera stream used by a video call and the remote
+decoded video canvas. It also shows counts for camera encoding, frames sent to
+the gateway, outgoing/incoming video RTP, and rendered remote frames. The
+allowlisted `independent-offer` diagnostics identify incoming video offers.
+If the browser video remains blank, these counters locate the first broken
+stage: zero encoded frames means camera/encoder failure; encoded frames with
+zero outgoing RTP means gateway/confirmation failure; incoming RTP with zero
+rendered frames means depacketization, keyframe, or decoder failure. Browser
+H.264 capture and decode can be checked with `npm run test:video-browser` using
+Chrome's fake camera; this is separate from a live Zalo interoperability test.
+
+After a call is confirmed the backend also sends the native camera-state
+notification `GET /api/voicecall/conf` (`isOnCam=1, isOnMic=-1, data=""`).
+Zalo Desktop 26.10.20 sends this from `ZCallInfo::_handleLocalCameraState` as
+soon as local capture starts, and the peer only learns about the caller's camera
+from the resulting `onoff_camera` control. Without it the remote client keeps
+the caller marked camera-off even while RTP flows. The simple page shows this as
+`Báo camera peer (/conf)`; if outgoing RTP increases but the peer still shows no
+picture, check that line first. The `video-camera` gateway action
+(`{ enabled: true|false }`) resends the same state for future camera toggles.
+
+The detailed architecture and sequencing diagram is available at
+http://localhost:4317/call-flow or in
+[`docs/zalo-call-flow.html`](../../docs/zalo-call-flow.html).
 
 Tone/echo modes test actual WebRTC PCM. Microphone/volume/mute/stop controls
 operate in the browser. Tests use fake microphone audio, not your physical mic.
@@ -86,3 +115,25 @@ node test/browser.mjs
 
 See [independent engine checkpoint](../../docs/reverse-engineering/independent-call-engine.md)
 for native evidence, tested primitives, limitations and next implementation steps.
+
+## React integration package
+
+The browser RPC, call state machine, microphone/WebRTC setup and speaker
+playback are also packaged as
+[`@zca-js/call-react`](../../packages/call-react/README.md). A React application can
+call `useZaloCall()` and use the high-level `call(calleeId)`, `answer()` and
+`hangup()` methods instead of reproducing the experimental signaling order.
+The package defaults to a same-origin `/ws` and `/api/config`; use a development
+proxy or an HTTPS reverse proxy in front of this gateway. If that proxy keeps
+the browser's public WebSocket origin, pass its exact HTTP(S) origin through
+`CALL_ALLOWED_ORIGINS` when starting the gateway.
+
+### Outgoing video signaling trial
+
+The backend now preserves the native outgoing type mapping: `callType: 1` is audio and
+`callType: 3` is video. An RPC client may pass `{ calleeId, callType: 3 }` to
+`call-outgoing-preflight`; the server sends `typeRequest: 3`, registers the caller relay,
+and builds command 416 with `callType: 1` plus the observed H.264 capability
+`video.codec: [{name:"h264",payload:97}]`. This is currently a signaling/relay trial;
+the browser camera encoder and decoder are connected through the experimental H.264
+bridge; peer interoperability still requires a live runtime call.

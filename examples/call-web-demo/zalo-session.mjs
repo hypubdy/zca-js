@@ -178,14 +178,14 @@ export class ZaloSession {
             name: String(user?.displayName || user?.zaloName || user?.username || user?.userId || ""),
         })).filter(user => /^\d+$/.test(user.id) && user.name).slice(0, 200);
     }
-    async requestOutgoingCall(calleeId, callId = String(Date.now() & 0x7fffffff), onPreflight) {
+    async requestOutgoingCall(calleeId, callId = String(Date.now() & 0x7fffffff), onPreflight, callType = 1) {
         if (!this.api || this.state !== "online") throw new Error("Kết nối tài khoản Zalo trước khi thử gọi");
         if (typeof calleeId !== "string" || !/^\d+$/.test(calleeId)) throw new Error("Chọn một người bạn hợp lệ");
         if (!/^\d+$/.test(String(callId))) throw new Error("Call ID không hợp lệ");
         this.notify("outgoing-call-stage", { flow: "preflight", stage: "requestcall-start" });
         let response;
         try {
-            response = await this.api.voiceCall.requestCall({ calleeId, callId: String(callId), typeRequest: 1, codec: "[]" });
+            response = await this.api.voiceCall.requestCall({ calleeId, callId: String(callId), typeRequest: callType, codec: "[]" });
         } catch (error) {
             this.notify("outgoing-call-error", { flow: "preflight", stage: "requestcall", ...safeCallError(error) });
             throw error;
@@ -203,7 +203,7 @@ export class ZaloSession {
             throw error;
         }
         this.notify("outgoing-call-stage", { flow: "preflight", stage: "response-parsed",
-            status: preflight.status, relayCandidates: preflight.servers.length,
+            status: preflight.status, callType, relayCandidates: preflight.servers.length,
             zrtcConfigPresent: Object.keys(preflight.zrtcConfig).length > 0 });
         let relay = null;
         if (typeof onPreflight === "function") {
@@ -217,14 +217,14 @@ export class ZaloSession {
         }
         const configKeys = Object.keys(preflight.zrtcConfig).filter(key =>
             ["srtpMode", "srtpRTCP", "packetMode", "srtpKey"].includes(key));
-        const summary = { callId: String(callId), status: preflight.status,
+        const summary = { callId: String(callId), status: preflight.status, callType,
             relayCandidates: preflight.servers.length, zrtcConfigPresent: Object.keys(preflight.zrtcConfig).length > 0,
             configKeys, callerRelayRegistered: relay?.registered === true };
         this.notify("zalo-outgoing-preflight", summary);
         this.notify("outgoing-call-stage", { flow: "relay", stage: relay?.registered ? "caller-relay-ready" : "preflight-only",
-            relayCandidates: preflight.servers.length, callerRelayRegistered: relay?.registered === true });
+            relayCandidates: preflight.servers.length, callType, callerRelayRegistered: relay?.registered === true });
         return { stage: relay?.registered ? "caller-relay-registered" : "preflight-parsed", ...summary,
-            ringing: false, mediaReady: false, next: "start-browser-mic-then-send-request" };
+            ringing: false, mediaReady: false, callType, next: "start-browser-mic-then-send-request" };
     }
     async answerIndependent(payload) {
         if (!this.api || this.state !== "online") throw new Error("Kết nối tài khoản Zalo trước khi answer");
@@ -262,6 +262,33 @@ export class ZaloSession {
         this.notify("zalo-signal", { command: 416, action: "request", success: true });
         this.notify("outgoing-call-stage", { flow: "invite", stage: "request-accepted" });
         return { requestAccepted: true, responseCode: result?.error_code ?? result?.code ?? null };
+    }
+    /**
+     * Tell the peer that the local camera/microphone state changed.
+     *
+     * Zalo Desktop does this through `/api/voicecall/conf` (API id 12006) as
+     * soon as local capture starts. The server then pushes an `onoff_camera`
+     * control message to the other side; without it the remote client keeps
+     * the caller marked camera-off and does not render inbound RTP.
+     * `isOnMic: -1` leaves the microphone state untouched, matching native.
+     */
+    async sendCallCameraState(peerId, callId, { isOnCam, isOnMic = -1, data = "" } = {}) {
+        if (!this.api || this.state !== "online")
+            throw new Error("Zalo chưa kết nối để gửi trạng thái camera");
+        const peer = String(peerId ?? "");
+        const id = String(callId ?? "");
+        if (!/^\d+$/.test(peer) || !/^\d+$/.test(id))
+            throw new Error("Thiếu peerId hoặc callId hợp lệ cho trạng thái camera");
+        if (isOnCam !== 0 && isOnCam !== 1) throw new Error("isOnCam phải là 0 hoặc 1");
+        if (![-1, 0, 1].includes(isOnMic)) throw new Error("isOnMic phải là -1, 0 hoặc 1");
+        // Native serializes callId as a JSON integer (ZMessageSerializer param_3 is int).
+        const numericCallId = Number(id);
+        const callIdValue = Number.isSafeInteger(numericCallId) && numericCallId <= 0x7fffffff ? numericCallId : id;
+        const result = await this.api.voiceCall.sendOnOffCamMic({ calleeId: peer, callId: callIdValue, isOnCam, isOnMic, data });
+        // Only the outcome is reported; the encrypted body may carry identifiers.
+        this.notify("zalo-signal", { command: 12006, action: "conf", success: true,
+            isOnCam, isOnMic });
+        return { signalSent: true, responseCode: result?.error_code ?? result?.code ?? null };
     }
     async acknowledgeOutgoingAnswer(calleeId, callId) {
         if (!this.api || this.state !== "online") throw new Error("Zalo chưa kết nối để ACK answer");

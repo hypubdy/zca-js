@@ -6,8 +6,10 @@
     "scripts": {
         "build": "node build.mjs",
         "start": "node --expose-gc server.mjs",
-        "test": "node --expose-gc --test test/*.test.mjs",
+        "test": "node --expose-gc --test test/*.test.mjs ../../packages/call-react/test/*.test.mjs",
         "test:browser": "node test/browser.mjs",
+        "test:simple": "node test/simple-browser.mjs",
+        "test:video-browser": "node test/video-capture-browser.mjs",
         "build:native": "node build-native.mjs"
     },
     "dependencies": {
@@ -15,6 +17,7 @@
         "opusscript": "^0.1.1",
         "react": "^19.2.0",
         "react-dom": "^19.2.0",
+        "@zca-js/call-react": "file:../../packages/call-react",
         "ws": "^8.18.0"
     },
     "devDependencies": {

@@ -14,6 +14,15 @@ const directory = path.dirname(fileURLToPath(import.meta.url));
 const port = Number(process.env.PORT || 4317);
 const host = "127.0.0.1";
 const iceServers = JSON.parse(process.env.ICE_SERVERS || "[]");
+const allowedOrigins = new Set([`http://127.0.0.1:${port}`, `http://localhost:${port}`]);
+for (const value of (process.env.CALL_ALLOWED_ORIGINS || "").split(",")) {
+    const origin = value.trim();
+    if (!origin) continue;
+    const url = new URL(origin);
+    if (!["http:", "https:"].includes(url.protocol) || url.origin !== origin)
+        throw new Error(`CALL_ALLOWED_ORIGINS contains an invalid origin: ${origin}`);
+    allowedOrigins.add(origin);
+}
 let media,
     owner,
     mediaInput,
@@ -23,19 +32,88 @@ let credentialInput;
 const peers = new Set();
 const log = [];
 let currentQr;
+let lastCameraState = null;
+let lastClientVideoStats = null;
+let formatCycleTimers = [];
 function notify(event, data = {}) {
+    if (event === "independent-video-frame") {
+        // A frame is media, not a diagnostic event. Keep it out of the event
+        // history and never queue it behind a slow browser WebSocket.
+        if (owner?.readyState === WebSocket.OPEN && owner.bufferedAmount < 1024 * 1024)
+            owner.send(JSON.stringify({ event, data }));
+        return;
+    }
     if (event === "zalo-qr") currentQr = data;
     if (event === "zalo-state" && ["online", "offline", "expired"].includes(data.state)) currentQr = undefined;
     if (event === "zalo-state" && data.state !== "online") independent.clear();
     if (event === "media-stats") lastStats = data;
+    if (event === "independent-confirmed" && process.env.VIDEO_FORMAT_CYCLE === "1") {
+        startFormatCycle();
+    }
+    if (event === "independent-confirmed") {
+        // Zalo Desktop reports local capture state through /api/voicecall/conf
+        // as soon as the camera starts; the peer's server-side control update
+        // (onoff_camera) is what makes its UI/renderer accept the video leg.
+        publishCameraState(1).catch(error =>
+            notify("independent-error", { message: `Chưa gửi được trạng thái camera: ${error.message}` }));
+    }
+    if (event === "independent-offer") console.log("Incoming call offer:", JSON.stringify(data));
     const message = JSON.stringify({ event, data });
     for (const peer of peers) if (peer.readyState === WebSocket.OPEN) peer.send(message);
-    if (!["media-stats", "zalo-qr", "independent-media-diagnostics", "independent-state"].includes(event) && !(event === "native" && data.playedSamples !== undefined)) {
+    if (!["media-stats", "zalo-qr", "independent-media-diagnostics", "independent-state", "independent-video-media"].includes(event) && !(event === "native" && data.playedSamples !== undefined)) {
         log.push({ time: new Date().toISOString(), event, data });
         if (log.length > 100) log.shift();
     }
 }
+/** A/B cycle for the outgoing video transport during one live call. */
+function startFormatCycle() {
+    for (const timer of formatCycleTimers) clearTimeout(timer);
+    formatCycleTimers = [];
+    // Native H264 constructor defaults use payload 100 while signaling
+    // advertises 97, so sweep payload types as well as packetization.
+    const windows = [
+        { format: "nal", extensions: false, payloadType: 100 },
+        { format: "nal", extensions: false, payloadType: 98 },
+        { format: "nal", extensions: true, payloadType: 97 },
+        { format: "balanced", extensions: false, payloadType: 97 },
+    ];
+    windows.forEach((window, index) => {
+        const timer = setTimeout(() => {
+            try {
+                const result = independent.setVideoFormat(window.format, window.extensions, window.payloadType);
+                notify("video-format-cycle", { ...window, window: index + 2, at: new Date().toISOString(), ...result });
+                console.log(new Date().toISOString(), "video-format-cycle", index + 2,
+                    window.format, "ext", window.extensions, "pt", window.payloadType);
+            } catch (error) {
+                notify("independent-error", { message: `Đổi format video lỗi: ${error.message}` });
+            }
+        }, (index + 1) * 20000);
+        formatCycleTimers.push(timer);
+    });
+    notify("video-format-cycle", { format: "nal", extensions: false, payloadType: 97, window: 1, at: new Date().toISOString(), active: true });
+    console.log(new Date().toISOString(), "video-format-cycle", 1, "nal", "ext", false, "pt", 97);
+}
+/** Send the native camera-state notification for the active call. */
+async function publishCameraState(enabled) {
+    if (zalo.state !== "online") return { signalSent: false, reason: "offline" };
+    const call = independent.activeCall();
+    if (!call) return { signalSent: false, reason: "no-call" };
+    const result = await zalo.sendCallCameraState(call.uidN, String(call.callId),
+        { isOnCam: enabled ? 1 : 0, isOnMic: -1 });
+    const responseCode = result.responseCode ?? null;
+    // The native client treats the /conf HTTP outcome as authoritative: a
+    // non-zero error_code means the peer never received onoff_camera.
+    if (typeof responseCode === "number" && responseCode !== 0) {
+        notify("independent-error", { message: `Zalo từ chối trạng thái camera (mã ${responseCode})` });
+        notify("independent-camera-signal", { enabled: Boolean(enabled), signalSent: false, responseCode });
+        return { ...result, signalSent: false };
+    }
+    lastCameraState = { enabled: Boolean(enabled), responseCode, at: new Date().toISOString() };
+    notify("independent-camera-signal", { enabled: Boolean(enabled), signalSent: result.signalSent === true, responseCode });
+    return result;
+}
 const independent = new IndependentCall(notify);
+independent.onVideoKeyFrameRequest = mediaSsrc => notify("independent-video-pli", { requestKeyFrame: true, mediaSsrc });
 const terminalCallActions = new Set(["cancel", "endcall", "end_call", "end", "group_cancel", "group_endcall", "group_end_call"]);
 const zalo = new ZaloSession(notify, () => null, () => false, { onControl: event => {
     independent.observe(event);
@@ -77,6 +155,8 @@ function snapshot() {
         nativeBuilt: false,
         liveVerified: false,
         processTapAvailable: false,
+        cameraState: lastCameraState,
+        clientVideoStats: lastClientVideoStats,
         log: log.slice(-20),
     };
 }
@@ -104,9 +184,16 @@ const server = http.createServer((request, response) => {
     }
     const assets = {
         "/": ["index.html", "text/html; charset=utf-8"],
+        "/simple": ["simple.html", "text/html; charset=utf-8"],
+        "/simple/": ["simple.html", "text/html; charset=utf-8"],
         "/main.js": ["main.js", "text/javascript"],
         "/main.css": ["main.css", "text/css"],
         "/main.js.map": ["main.js.map", "application/json"],
+        "/simple.js": ["simple.js", "text/javascript"],
+        "/simple.css": ["simple.css", "text/css"],
+        "/simple.js.map": ["simple.js.map", "application/json"],
+        "/simple.css.map": ["simple.css.map", "application/json"],
+        "/call-flow": ["call-flow.html", "text/html; charset=utf-8"],
     };
     const asset = assets[url.pathname];
     if (!asset) {
@@ -121,10 +208,10 @@ const server = http.createServer((request, response) => {
     response.setHeader("Content-Type", asset[1]);
     fs.createReadStream(file).pipe(response);
 });
-const wsServer = new WebSocketServer({ noServer: true, maxPayload: 256 * 1024 });
+const wsServer = new WebSocketServer({ noServer: true, maxPayload: 12 * 1024 * 1024 });
 server.on("upgrade", (request, socket, head) => {
     const origin = request.headers.origin;
-    if (request.url !== "/ws" || ![`http://127.0.0.1:${port}`, `http://localhost:${port}`].includes(origin)) {
+    if (request.url !== "/ws" || !allowedOrigins.has(origin)) {
         socket.destroy();
         return;
     }
@@ -136,6 +223,22 @@ wsServer.on("connection", (ws) => {
     if (currentQr) ws.send(JSON.stringify({ event: "zalo-qr", data: currentQr }));
     let busy = false;
     ws.on("message", async (raw) => {
+        // Encoded H.264 frames are a low-latency data path and must not wait behind
+        // request/response RPC serialization. They stay in backend memory only.
+        try {
+            const fast = JSON.parse(raw.toString());
+            if (fast?.action === "video-frame") {
+                if (owner !== ws || !media || media.closed || media.mode !== "zalo") return;
+                const encoded = fast.data?.frame;
+                const timestamp = fast.data?.timestamp;
+                if (typeof encoded !== "string" || encoded.length > 12 * 1024 * 1024 || !Number.isInteger(timestamp)) return;
+                const frame = Buffer.from(encoded, "base64");
+                if (!frame.length || frame.length > 8 * 1024 * 1024) return;
+                try { independent.sendBrowserVideoFrame(Uint8Array.from(frame), timestamp, fast.data?.keyFrame === true); }
+                catch (error) { notify("independent-error", { message: `Video frame bị từ chối: ${error.message}` }); }
+                return;
+            }
+        } catch { /* ordinary RPC path reports malformed requests below */ }
         if (busy) {
             let request;
             try {
@@ -149,6 +252,12 @@ wsServer.on("connection", (ws) => {
         let id, action, outgoingFlow;
         try {
             const request = JSON.parse(raw.toString());
+            if (request.event === "video-client-stats" && !request.action) {
+                lastClientVideoStats = { ...request.data, at: new Date().toISOString() };
+                notify("independent-video-client-stats", lastClientVideoStats);
+                busy = false;
+                return;
+            }
             id = request.id;
             busy = true;
             ({ action } = request);
@@ -200,7 +309,7 @@ wsServer.on("connection", (ws) => {
                 if (zalo.state !== "online") throw new Error("Kết nối tài khoản Zalo trước");
                 if (independent.activeCall()) throw new Error("Đang có cuộc gọi khác; kết thúc cuộc gọi đó trước");
                 result = await zalo.requestOutgoingCall(String(data.calleeId || ""), undefined,
-                    preflight => independent.registerOutgoingRelay(preflight, String(data.calleeId || "")));
+                    preflight => independent.registerOutgoingRelay(preflight, String(data.calleeId || ""), Number(data.callType || 1)), Number(data.callType || 1));
             } else if (action === "call-outgoing-invite") {
                 if (zalo.state !== "online") throw new Error("Kết nối tài khoản Zalo trước");
                 if (owner !== ws || !media || media.closed || media.mode !== "zalo")
@@ -221,6 +330,15 @@ wsServer.on("connection", (ws) => {
             } else if (action === "call-relay-connect") {
                 if (zalo.state !== "online") throw new Error("Kết nối tài khoản Zalo trước");
                 result = await independent.registerRelay();
+            } else if (action === "video-pli") {
+                independent.sendVideoPli();
+                result = { sent: true };
+            } else if (action === "video-format") {
+                result = independent.setVideoFormat(String(data.format || ""),
+                    typeof data.extensions === "boolean" ? data.extensions : undefined,
+                    typeof data.payloadType === "number" ? data.payloadType : undefined);
+            } else if (action === "video-camera") {
+                result = await publishCameraState(data.enabled !== false);
             } else if (action === "call-accept") {
                 if (zalo.state !== "online") throw new Error("Kết nối tài khoản Zalo trước");
                 if (owner !== ws || !media || media.closed || media.mode !== "zalo")
@@ -238,8 +356,8 @@ wsServer.on("connection", (ws) => {
                 await stopMedia();
                 const call = independent.activeCall();
                 const signal = call && zalo.state === "online"
-                    ? call.direction === "outgoing" && call.stage !== "request-sent"
-                        ? zalo.cancelOutgoingCall(call.uidN, String(call.callId), 1)
+                    ? call.direction === "outgoing" && call.stage !== "confirmed"
+                        ? zalo.cancelOutgoingCall(call.uidN, String(call.callId), call.callType ?? 1)
                         : zalo.endCall(call.uidN, String(call.callId))
                     : Promise.resolve({ signalSent: false, localAudioStopped: true });
                 // Stop media and close the relay immediately; do not keep the mic route or UDP socket alive

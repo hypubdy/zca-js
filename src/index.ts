@@ -2,7 +2,7 @@ export * from "./Errors/index.js";
 export * from "./models/index.js";
 export * from "./zalo.js";
 export type { CallEvent, CallControlBatchSummary } from "./models/CallEvent.js";
-export type { AnswerCallPayload, RequestOutgoingCallPayload, OutgoingCallMediaRequestPayload } from "./apis/voiceCall.js";
+export type { AnswerCallPayload, RequestOutgoingCallPayload, OutgoingCallMediaRequestPayload, CallCameraStatePayload } from "./apis/voiceCall.js";
 
 export type { ContextSession, ContextBase, AppContextExtended, AppContextBase, Options, ZPWServiceMap, ImageMetadataGetter, ImageMetadataGetterResponse } from "./context.js";
 

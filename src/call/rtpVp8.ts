@@ -115,7 +115,11 @@ export class Vp8RtpDepacketizer {
         const frame = new Uint8Array(this.total);
         let offset = 0;
         for (const fragment of this.fragments) { frame.set(fragment, offset); offset += fragment.length; }
-        const result = { data: frame, timestamp: this.timestamp!, keyFrame: (frame[0] & 0x01) === 0 };
+        // VP8 keyframes carry the uncompressed-frame start code 9d 01 2a
+        // after the first three bytes; the frame-type bit alone is not enough
+        // when a native relay starts in the middle of a partition.
+        const keyFrame = (frame[0] & 0x01) === 0 && frame.length >= 6 && frame[3] === 0x9d && frame[4] === 0x01 && frame[5] === 0x2a;
+        const result = { data: frame, timestamp: this.timestamp!, keyFrame };
         this.reset();
         return result;
     }

@@ -1,0 +1,463 @@
+:root {
+    font-family:
+        Inter,
+        ui-sans-serif,
+        system-ui,
+        -apple-system,
+        BlinkMacSystemFont,
+        "Segoe UI",
+        sans-serif;
+    color: #172337;
+    background: #f5f7fb;
+    font-synthesis: none;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    min-width: 320px;
+}
+
+button,
+select {
+    font: inherit;
+}
+
+button {
+    cursor: pointer;
+}
+
+button:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+}
+
+button:focus-visible,
+select:focus-visible,
+a:focus-visible {
+    outline: 3px solid #7db2ff;
+    outline-offset: 3px;
+}
+
+.simple-shell {
+    width: min(760px, calc(100% - 32px));
+    margin: 0 auto;
+    padding: 32px 0 26px;
+}
+
+.simple-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 28px;
+}
+
+.logo-mark {
+    width: 44px;
+    height: 44px;
+    border-radius: 14px;
+    display: grid;
+    place-items: center;
+    color: white;
+    background: #1473e6;
+    font-size: 23px;
+    font-weight: 800;
+    box-shadow: 0 8px 22px #1473e633;
+}
+
+.simple-header strong,
+.simple-header span {
+    display: block;
+}
+
+.simple-header strong {
+    font-size: 17px;
+}
+
+.simple-header span {
+    margin-top: 2px;
+    color: #758196;
+    font-size: 12px;
+}
+
+.gateway {
+    margin-left: auto;
+    padding: 8px 11px;
+    border-radius: 999px;
+    background: white;
+    border: 1px solid #e4e9f1;
+    color: #66738a;
+    font-size: 11px;
+    font-weight: 650;
+}
+
+.gateway i {
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    margin-right: 5px;
+    border-radius: 50%;
+    background: #f0a647;
+}
+
+.gateway.connected i {
+    background: #21b675;
+}
+
+.account-card,
+.call-card,
+.incoming-card {
+    background: white;
+    border: 1px solid #e4e9f1;
+    border-radius: 22px;
+    box-shadow: 0 15px 45px #283b5b0d;
+}
+
+.account-card {
+    padding: 24px;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: center;
+    gap: 18px;
+}
+
+.section-label {
+    color: #7a879b;
+    font-size: 10px;
+    font-weight: 750;
+    letter-spacing: 1.35px;
+}
+
+.account-card h1 {
+    margin: 7px 0 5px;
+    font-size: 22px;
+    letter-spacing: -0.5px;
+}
+
+.account-card p,
+.incoming-card p,
+.media-state,
+.empty-hint {
+    margin: 0;
+    color: #77849a;
+    font-size: 13px;
+    line-height: 1.55;
+}
+
+.button {
+    border: 0;
+    border-radius: 12px;
+    min-height: 43px;
+    padding: 0 17px;
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.button.primary {
+    color: white;
+    background: #1473e6;
+}
+
+.button.secondary {
+    color: #40506a;
+    background: #eff3f8;
+}
+
+.qr-block {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    padding: 18px;
+    border-radius: 16px;
+    background: #f6f9fd;
+}
+
+.qr-block img {
+    width: 156px;
+    height: 156px;
+    border-radius: 12px;
+    background: white;
+}
+
+.qr-block strong,
+.qr-block span {
+    display: block;
+}
+
+.qr-block span {
+    color: #77849a;
+    font-size: 12px;
+    margin-top: 6px;
+}
+
+.incoming-card {
+    margin-top: 18px;
+    padding: 20px 22px;
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: 17px;
+    align-items: center;
+    border-color: #cfe0fa;
+    animation: ring-card 1.4s ease-in-out infinite alternate;
+}
+
+@keyframes ring-card {
+    to {
+        box-shadow: 0 16px 46px #1473e624;
+    }
+}
+
+.incoming-icon {
+    width: 48px;
+    height: 48px;
+    border-radius: 16px;
+    display: grid;
+    place-items: center;
+    color: #1473e6;
+    background: #eaf3ff;
+}
+
+svg {
+    width: 21px;
+    height: 21px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.incoming-card > div > span {
+    color: #1473e6;
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 1.2px;
+}
+
+.incoming-card h2 {
+    margin: 5px 0 4px;
+    font-size: 17px;
+}
+
+.incoming-actions {
+    display: flex;
+    gap: 10px;
+}
+
+.round-button {
+    width: 45px;
+    height: 45px;
+    display: grid;
+    place-items: center;
+    border: 0;
+    border-radius: 50%;
+    color: white;
+}
+
+.round-button.decline {
+    background: #eb5260;
+    transform: rotate(135deg);
+}
+
+.round-button.accept {
+    background: #20b776;
+}
+
+.call-card {
+    margin-top: 18px;
+    padding: 38px 32px 32px;
+    text-align: center;
+}
+
+.video-card {
+    margin-top: 18px;
+    padding: 22px;
+    display: grid;
+    grid-template-columns: 1fr minmax(180px, 260px) auto;
+    align-items: center;
+    gap: 18px;
+    background: white;
+    border: 1px solid #e4e9f1;
+    border-radius: 22px;
+    box-shadow: 0 15px 45px #283b5b0d;
+}
+
+.video-card h2 { margin: 7px 0 5px; font-size: 17px; }
+.video-card p { margin: 0; color: #77849a; font-size: 12px; line-height: 1.5; }
+.video-preview-wrap {
+    position: relative;
+    min-height: 112px;
+    overflow: hidden;
+    display: grid;
+    place-items: center;
+    border-radius: 14px;
+    color: #7b879a;
+    background: #eef2f7;
+    font-size: 11px;
+}
+.video-preview-wrap video { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; transform: scaleX(-1); }
+
+.call-orb {
+    width: 78px;
+    height: 78px;
+    margin: 0 auto 22px;
+    border-radius: 27px;
+    display: grid;
+    place-items: center;
+    color: #1473e6;
+    background: #edf5ff;
+}
+
+.call-orb svg {
+    width: 31px;
+    height: 31px;
+}
+
+.call-orb.active {
+    animation: call-pulse 1.3s ease-out infinite;
+}
+
+.call-orb.connected {
+    color: white;
+    background: #20b776;
+}
+
+.call-orb.failed {
+    color: #d94352;
+    background: #fff0f1;
+}
+
+@keyframes call-pulse {
+    70% {
+        box-shadow: 0 0 0 16px #1473e600;
+    }
+    0% {
+        box-shadow: 0 0 0 0 #1473e62d;
+    }
+}
+
+.call-card h2 {
+    margin: 8px 0 6px;
+    font-size: 24px;
+    letter-spacing: -0.6px;
+}
+
+.dial-row {
+    width: min(500px, 100%);
+    margin: 28px auto 0;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 10px;
+}
+
+.dial-row select {
+    min-width: 0;
+    height: 47px;
+    padding: 0 13px;
+    border: 1px solid #dce3ed;
+    border-radius: 12px;
+    color: #26364e;
+    background: white;
+}
+
+.call-button,
+.end-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    color: white;
+}
+
+.call-button {
+    background: #20b776;
+}
+
+.end-button {
+    margin-top: 28px;
+    background: #eb5260;
+}
+
+.end-button svg {
+    transform: rotate(135deg);
+}
+
+.empty-hint {
+    margin-top: 26px;
+}
+
+.error-banner {
+    margin-top: 16px;
+    padding: 13px 15px;
+    border: 1px solid #f2c8cd;
+    border-radius: 12px;
+    color: #a62e3a;
+    background: #fff3f4;
+    font-size: 13px;
+}
+
+footer {
+    margin-top: 20px;
+    color: #8994a7;
+    text-align: center;
+    font-size: 11px;
+}
+
+footer a {
+    color: #54657f;
+}
+
+@media (max-width: 600px) {
+    .simple-shell {
+        width: min(100% - 22px, 760px);
+        padding-top: 18px;
+    }
+
+    .gateway {
+        max-width: 115px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .account-card {
+        grid-template-columns: 1fr;
+        padding: 20px;
+    }
+
+    .account-card > .button {
+        width: 100%;
+    }
+
+    .qr-block {
+        grid-column: 1;
+        flex-direction: column;
+        text-align: center;
+    }
+
+    .incoming-card {
+        grid-template-columns: auto 1fr;
+    }
+
+    .incoming-actions {
+        grid-column: 1 / -1;
+        justify-content: center;
+    }
+
+    .call-card {
+        padding: 30px 18px 25px;
+    }
+
+    .dial-row {
+        grid-template-columns: 1fr;
+    }
+
+    .video-card { grid-template-columns: 1fr; }
+    .video-card .button { width: 100%; }
+}
+.video-preview-wrap canvas { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; background: #dfe6ef; }
+.remote-preview { margin-top: 8px; }

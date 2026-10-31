@@ -168,3 +168,33 @@ The receive-answer acknowledgment path below establishes the transition to confi
 `receiveAnswerResponse` at `0x1000cc318` (successful HTTP402 response callback) requires state13, completes the accepted-signal scheduler promise (`0x1000cc380`) and emits peer call event13 (`0x1000cc38c`). It does not set connected state. `receiveAnswerAck` at `0x1000cc3e0` validates non-null data, same callId, state13 and nonduplicate ACK; completes scheduler promise (`0x1000cc52c`), emits event13, sets ACK flag0x889, then calls Peer.setCallState(5) (`0x1000cc54c`). `_onNativeChangeState2Confirmed` at `0x1000c80dc` sets outer ZCallInfo state1 and updates UI. A replacement must distinguish HTTP answer accepted from remote-call confirmation.
 
 Scheduler retry details are established by `ZScheduleThread::processFunc` `0x1000c3a60`: callback invokes immediately, subsequent wait deadline is now+period milliseconds, timeout invokes callback again. Thus retries should stop on successful HTTP402 response OR remote answerAck, and cleanup must cancel them.
+
+## Individual video request/answer signaling (Ghidra confirmation 2026-10-22)
+
+The previously unresolved one-to-one serializers are now identified:
+
+- `ZMessageSerializer::sendZRtpRequestCall` at `0x10002605c` emits `type:"sendSignal"`, `command:0x1a0` (416), with `data` containing exactly `calleeId`, `callId`, `rtpAddress`, `rtcpAddress`, `codec`, `extendData`, and `session`.
+- `ZMessageSerializer::sendAnswerCall` at `0x100026324` emits `type:"sendSignal"`, `command:0x192` (402), with `data` containing exactly `callerId`, `callId`, `status`, `codec`, `extendData`, `rtpAddress`, `rtcpAddress`, and `session`.
+- `ZMessageSerializer::sendAnswerAckCall` at `0x100026628` emits `type:"sendSignal"`, `command:0x198` (408), with `data` containing `calleeId` and `callId`.
+- `_parseActAnswer` at `0x10001c394` reads envelope `callId` and `status`, then parses JSON string `params` and extracts `codec`, `extendData`, and `platform`.
+- `_parseActAnswerAck` at `0x10001ceb8` parses the acknowledgement object and dispatches it without any codec fields.
+
+This confirms that video does not use a separate one-to-one signaling command. The distinction is carried in `callType` and the nested `video.codec` capability in the JSON string `extendData`; the outer 416/402/408 envelopes are shared with audio. It still does not prove that a guessed video `status`, codec string, or answer capability is accepted by the server.
+
+## Outgoing call-type value (Ghidra confirmation 2026-10-22)
+
+`ZCallInfo::_updateCallInfo(std::shared_ptr<ZMakeCallInfo>)` at `0x1000cd938`
+copies `ZMakeCallInfo.type` directly into the outgoing call's type field at
+`ZCallInfo+0x890`; `_trySendRequestCallSignal` passes that byte to
+`sendRequestCall`. The incoming path at `0x1000cd3b4` maps `callType == 1` to
+native type `3` and audio to native type `1`. Therefore the outgoing preflight
+uses `typeRequest: 1` for audio and `typeRequest: 3` for video. The demo backend
+now accepts `callType: 3`, advertises the observed H.264 capability, and keeps
+that value through caller relay registration and command 416 construction.
+This prepares signaling only; it does not yet provide browser video frames or
+prove that the remote peer accepts the video media answer.
+
+The native `sendAnswerCall` serializer spells the session field exactly `session`.
+The REST adapter retains its historical `session_id` field and now also supplies the
+native spelling when sending an answer, so video and audio answer paths preserve both
+compatibility forms until a live server response confirms which one is required.

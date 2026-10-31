@@ -30,6 +30,7 @@ export interface ParsedRtcpPacketSummary {
     packetType: number;
     count: number;
     senderSsrc?: number;
+    mediaSsrc?: number;
     senderInfo?: RtcpSenderInfo;
     reportBlocks?: RtcpReportBlock[];
 }
@@ -124,6 +125,7 @@ export function parseCompoundRtcp(packet: Uint8Array): ParsedRtcpPacketSummary[]
         if ([200, 201, 202, 204, 205, 206, 207].includes(packetType)) {
             if (partLength < 8) throw new RangeError("RTCP packet is shorter than its sender SSRC");
             summary.senderSsrc = view.getUint32(4, false);
+            if ((packetType === 205 || packetType === 206) && partLength >= 12) summary.mediaSsrc = view.getUint32(8, false);
         }
         if (packetType === 200 || packetType === 201) {
             const baseLength = packetType === 200 ? 28 : 8;
@@ -157,6 +159,26 @@ export function parseCompoundRtcp(packet: Uint8Array): ParsedRtcpPacketSummary[]
         offset += partLength;
     }
     return summaries;
+}
+
+/** Build an RTCP PSFB Picture Loss Indication (RFC 4585), requesting a keyframe. */
+export function buildRtcpPli(senderSsrc: number, mediaSsrc: number): Buffer {
+    const packet = Buffer.alloc(12);
+    uint32(senderSsrc, "senderSsrc"); uint32(mediaSsrc, "mediaSsrc");
+    packet[0] = 0x81; packet[1] = 206; packet.writeUInt16BE(2, 2);
+    packet.writeUInt32BE(senderSsrc, 4); packet.writeUInt32BE(mediaSsrc, 8);
+    return packet;
+}
+
+/**
+ * Build the compound RTCP shape emitted by the WebRTC stack embedded in
+ * ZaloCall when RtcpMode is set to compound and RequestKeyFrame() selects PLI.
+ * Older compound-RTCP receivers may discard a standalone feedback packet.
+ */
+export function buildCompoundRtcpPli(senderSsrc: number, mediaSsrc: number, cname: string,
+    senderInfo?: RtcpSenderInfo): Buffer {
+    const report = buildCompoundRtcpReport({ ssrc: senderSsrc, cname, senderInfo });
+    return Buffer.concat([report, buildRtcpPli(senderSsrc, mediaSsrc)]);
 }
 
 /** Basic per-source RTP reception statistics used to populate one RTCP report block. */

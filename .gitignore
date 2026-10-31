@@ -134,3 +134,6 @@ cookies.json
 credentials.json
 /.dev
 test/**/*.test.*
+
+# Local reverse-engineering scratch (thinned ZaloCall slice, extractors)
+/.re

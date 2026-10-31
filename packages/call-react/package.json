@@ -1,0 +1,30 @@
+{
+    "name": "@zca-js/call-react",
+    "version": "0.2.0",
+    "description": "Browser client and React hook for the ZCA call gateway (audio, experimental video)",
+    "type": "module",
+    "sideEffects": false,
+    "files": [
+        "src",
+        "index.d.ts",
+        "react.d.ts",
+        "README.md"
+    ],
+    "exports": {
+        ".": {
+            "types": "./index.d.ts",
+            "default": "./src/index.js"
+        },
+        "./react": {
+            "types": "./react.d.ts",
+            "default": "./src/react.js"
+        }
+    },
+    "peerDependencies": {
+        "react": ">=18"
+    },
+    "scripts": {
+        "test": "node --test test/*.test.mjs"
+    },
+    "license": "MIT"
+}

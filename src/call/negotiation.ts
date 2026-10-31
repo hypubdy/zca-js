@@ -1,5 +1,29 @@
 /** Recovered input schemas; no answer or media-session generation is implied. */
 export type ZrtcAudioCodec = { name: string; payload: number; frmPtime: number; dynamicFptime: number };
+/** Video capability advertised in native extendData.video.codec. */
+export type ZrtcVideoCodec = { name: string; payload: number };
+
+/** Native capability observed in CallController::_getVideoCodecSupport. */
+export const ZRTC_NATIVE_H264_VIDEO_CODEC: ZrtcVideoCodec = Object.freeze({ name: "h264", payload: 97 });
+
+/** Build the bounded video capability portion of extendData from negotiated transport values. */
+export function buildZrtcVideoCapabilities(input: {
+    srtpMode: number; srtcp: number; packetMode: number; platform?: number; protocol?: number;
+    newZrtc?: number; sP2P?: number; gccMode?: number;
+}): Record<string, unknown> {
+    if (!input || !Number.isInteger(input.srtpMode) || !Number.isInteger(input.srtcp) || !Number.isInteger(input.packetMode))
+        throw new TypeError("Video capability transport values must be integers");
+    return {
+        callType: 1,
+        video: { codec: [{ ...ZRTC_NATIVE_H264_VIDEO_CODEC }] },
+        newZrtc: Number.isInteger(input.newZrtc) ? input.newZrtc : 0,
+        platform: Number.isInteger(input.platform) ? input.platform : 2,
+        protocol: Number.isInteger(input.protocol) ? input.protocol : 0,
+        packetMode: input.packetMode, gccMode: Number.isInteger(input.gccMode) ? input.gccMode : 0,
+        srtpMode: input.srtpMode, sP2P: Number.isInteger(input.sP2P) ? input.sP2P : 0,
+        srtcp: input.srtcp, gccAudio: false, gccSVLR: false, gccEarlyCall: false, tpType: 0, spTcp: 0,
+    };
+}
 export type ZrtcIncomingOffer = {
     callId: number;
     uidFrom: string | number;
@@ -23,6 +47,8 @@ export type ZrtcIncomingOffer = {
     videoCodecId?: number;
     /** Numeric codec IDs only when extendData.video.codec is an integer array. */
     videoCodecIds?: number[];
+    /** Bounded video codec entries when the native capability uses objects. */
+    videoCodecs?: ZrtcVideoCodec[];
     servers?: unknown[];
     zrtcConfig?: Record<string, unknown>;
 };
@@ -34,6 +60,8 @@ export type ZrtcAcceptedAnswer = {
     rtpAddress: string;
     rtcpAddress: string;
     session_id: string;
+    /** Native serializer field; API compatibility retains session_id as well. */
+    session: string;
     extendData: string;
 };
 /** Native 401 response fields needed to begin the caller-side relay setup. */
@@ -157,6 +185,7 @@ export function parseZrtcIncomingOffer(data: unknown): ZrtcIncomingOffer {
     const extendData = optionalText(params.extendData, "extendData");
     let videoCodecId: number | undefined;
     let videoCodecIds: number[] | undefined;
+    let videoCodecs: ZrtcVideoCodec[] | undefined;
     let callType: number | undefined;
     if (extendData !== undefined) {
         const capabilities = JSON.parse(extendData) as unknown;
@@ -171,8 +200,14 @@ export function parseZrtcIncomingOffer(data: unknown): ZrtcIncomingOffer {
                 if (typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 0x7fffffff)
                     videoCodecId = value;
                 else if (Array.isArray(value))
-                    videoCodecIds = value.slice(0, 16).filter((item): item is number =>
-                        typeof item === "number" && Number.isInteger(item) && item >= 0 && item <= 0x7fffffff);
+                    if (value.every(item => typeof item === "number" && Number.isInteger(item)))
+                        videoCodecIds = value.slice(0, 16).filter((item): item is number => item >= 0 && item <= 0x7fffffff);
+                    else
+                        videoCodecs = value.slice(0, 16).filter(item => item && typeof item === "object" && !Array.isArray(item))
+                            .map(item => item as Record<string, unknown>)
+                            .filter(item => typeof item.name === "string" && item.name.length > 0 && item.name.length <= 64 &&
+                                Number.isInteger(item.payload) && Number(item.payload) >= 0 && Number(item.payload) <= 127)
+                            .map(item => ({ name: item.name as string, payload: item.payload as number }));
             }
         }
     }
@@ -194,6 +229,7 @@ export function parseZrtcIncomingOffer(data: unknown): ZrtcIncomingOffer {
         videoEnable: video?.enable === undefined ? undefined : codecInteger(video.enable, "params.video.enable"),
         videoCodecId,
         videoCodecIds,
+        videoCodecs,
         servers: params.servers,
         zrtcConfig: params.zrtc_config === undefined ? undefined : object(params.zrtc_config, "zrtc_config"),
     };
@@ -229,6 +265,7 @@ export function buildZrtcAcceptedAnswer(input: {
         rtpAddress: input.rtpAddress,
         rtcpAddress: input.rtcpAddress,
         session_id: input.offer.sessionId,
+        session: input.offer.sessionId,
         extendData: JSON.stringify(input.capabilities),
     };
 }

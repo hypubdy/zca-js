@@ -133,18 +133,18 @@ test('outgoing call parses the first requestcall response, hides media secrets, 
   servers:[{rtpaddr:'192.0.2.1:1000',rtcpaddr:'192.0.2.1:1001',relayTime:12,sent:'ignored',recv:null}]};}}};
  let internalPreflight;
  assert.deepEqual(await session.requestOutgoingCall('123','42',async value=>{internalPreflight=value;return {registered:true};}),{
-  stage:'caller-relay-registered',callId:'42',status:0,relayCandidates:1,zrtcConfigPresent:true,
+  stage:'caller-relay-registered',callId:'42',status:0,callType:1,relayCandidates:1,zrtcConfigPresent:true,
   configKeys:['srtpMode','srtpKey'],callerRelayRegistered:true,ringing:false,mediaReady:false,next:'start-browser-mic-then-send-request',
  });
  assert.equal(internalPreflight.sessionId,'private-session');
  assert.deepEqual(sent,{calleeId:'123',callId:'42',typeRequest:1,codec:'[]'});
  assert.deepEqual(events,[
   {event:'outgoing-call-stage',data:{flow:'preflight',stage:'requestcall-start'}},
-  {event:'outgoing-call-stage',data:{flow:'preflight',stage:'response-parsed',status:0,relayCandidates:1,zrtcConfigPresent:true}},
+  {event:'outgoing-call-stage',data:{flow:'preflight',stage:'response-parsed',status:0,callType:1,relayCandidates:1,zrtcConfigPresent:true}},
   {event:'outgoing-call-stage',data:{flow:'relay',stage:'registration-start',relayCandidates:1}},
-  {event:'zalo-outgoing-preflight',data:{callId:'42',status:0,relayCandidates:1,
+  {event:'zalo-outgoing-preflight',data:{callId:'42',status:0,callType:1,relayCandidates:1,
    zrtcConfigPresent:true,configKeys:['srtpMode','srtpKey'],callerRelayRegistered:true}},
-  {event:'outgoing-call-stage',data:{flow:'relay',stage:'caller-relay-ready',relayCandidates:1,callerRelayRegistered:true}},
+  {event:'outgoing-call-stage',data:{flow:'relay',stage:'caller-relay-ready',relayCandidates:1,callType:1,callerRelayRegistered:true}},
  ]);
  assert.equal(JSON.stringify(events).includes('never-forward-this'),false);
  await assert.rejects(session.requestOutgoingCall('not-an-id','42'),/người bạn hợp lệ/);
@@ -185,4 +185,28 @@ test('safe call error details redact tokens, IDs, and relay addresses', () => {
  assert.match(details.message,/\[redacted\]/);
  assert.match(details.message,/\[address\]/);
  assert.match(details.message,/\[id\]/);
+});
+
+test('outgoing video preflight uses native type 3', async () => {
+ const session=new ZaloSession(()=>{},()=>null,()=>false); session.state='online'; let sent;
+ session.api={voiceCall:{requestCall:async payload=>{sent=payload;return {status:0,fromId:12,toId:123,id:42,protocol:1,sessId:'private-session',zrtc_config:{srtpMode:1},servers:[{rtpaddr:'192.0.2.1:1000',rtcpaddr:'192.0.2.1:1001'}]};}}};
+ const result=await session.requestOutgoingCall('123','42',undefined,3);
+ assert.equal(sent.typeRequest,3); assert.equal(result.callType,3);
+});
+
+test('camera state uses the native /voicecall/conf shape without leaking the response', async () => {
+ const events=[];let sent;
+ const session=new ZaloSession((event,data)=>events.push({event,data}),()=>null,()=>false);
+ session.state='online';
+ session.api={voiceCall:{sendOnOffCamMic:async payload=>{sent=payload;return {error_code:0,data:{secret:'never-forward-this'}};}}};
+ assert.deepEqual(await session.sendCallCameraState('123','42',{isOnCam:1}),{signalSent:true,responseCode:0});
+ assert.deepEqual(sent,{calleeId:'123',callId:42,isOnCam:1,isOnMic:-1,data:''});
+ assert.deepEqual(events,[{event:'zalo-signal',data:{command:12006,action:'conf',success:true,isOnCam:1,isOnMic:-1}}]);
+ assert.equal(JSON.stringify(events).includes('never-forward-this'),false);
+ assert.equal(JSON.stringify(events).includes('123'),false);
+ await assert.rejects(session.sendCallCameraState('not-an-id','42',{isOnCam:1}),/peerId/);
+ await assert.rejects(session.sendCallCameraState('123','42',{isOnCam:2}),/isOnCam/);
+ await assert.rejects(session.sendCallCameraState('123','42',{isOnCam:1,isOnMic:2}),/isOnMic/);
+ session.state='offline';
+ await assert.rejects(session.sendCallCameraState('123','42',{isOnCam:1}),/chưa kết nối/);
 });

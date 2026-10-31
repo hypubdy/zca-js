@@ -1,3 +1,106 @@
+# Inbound video đã hiện; outbound chuyển sang NAL-aligned — 2026-10-25
+
+Cuộc gọi live xác nhận sửa đường nhận: 472 gói → 453 AU, browser nhận 453/giải mã
+442, **0 lỗi decoder, 0 PLI**, hình peer 240x426 hiện đúng. Ba keyframe dump
+decode offline cho mean luma 121–130 (không đen).
+
+Outbound vẫn đen dù 1.830 gói/452 frame/9 keyframe (~1,89 MB) đã gửi. Đối chiếu
+native: `VideoRtpRtcp::setPacketMode` (`0x10028f1dc`) chỉ bật packetizer mode 7
+khi packetMode == 1; mode 2 dùng packetizer H.264 chuẩn. Gói inbound của peer
+dưới mode 2 đều bắt đầu bằng start code Annex-B (439/439) → NAL-aligned.
+
+Đã sửa: thêm `nal-annexb` (mỗi NAL + start code 4 byte trong một gói, NAL lớn
+dùng FU-A), mặc định cho packetMode 2; mode 1 giữ balanced; có env
+`VIDEO_PACKETIZATION=nal|balanced|rfc6184`; receiver raw xử lý thêm FU-A.
+
+Test: protocol 48/48, demo 48/48, tsc/lint/build pass. Gateway cần restart +
+QR login lại. Bước live: gọi video, xem peer có hiện hình không; nếu vẫn đen,
+thử `VIDEO_PACKETIZATION=balanced` để so sánh trực tiếp.
+
+# Trace video live 2026-10-25 và sửa đường nhận — 2026-10-25
+
+Cuộc gọi video outgoing thật đã nối và chạy ~26 giây. Gateway giữ lại được:
+2.451 RTP video gửi (622 frame, 12 keyframe); nhận 363 gói trên một SSRC
+`198904355`, dựng 213 frame/43 keyframe nhưng browser gửi 22 PLI và không hiện
+frame nào; audio decode 1.283 gói Opus và đưa vào browser nhưng `outputRms`
+`3.4e-6` (im lặng), kèm control `mute_audio` từ peer ở cuối cuộc gọi. `/conf`
+đã được chấp nhận (`cameraState.enabled = true`).
+
+Đối chiếu native (Ghidra 12.1.4, cùng slice arm64):
+
+- `Peer::_initVideoRtpRtcp` (`0x10019a4d4`) đặt SSRC = `CallController::getUserId`
+  và đăng ký mọi candidate codec; phía nhận demux theo payload type trong
+  `ViEReceiver::ReceivedRTPPacket`, không gộp mọi gói cùng SSRC.
+- `RtpPacketizerH264::GeneratePackets` mode 7 (`0x1003dabb8`) tính
+  `packetCount = ceil(size/(maxPayload-2))`, `chunk = ceil(size/packetCount)`;
+  `WriteNextPacket` (`0x1003db5dc`) copy raw, không thêm prefix. Repo đã khớp.
+- PT98 trong trace là payload phụ (FEC/RTX) dùng chung SSRC/sequence với PT97;
+  gộp vào AU Annex-B làm hỏng frame → đúng với vòng PLI lặp.
+- Native `RTCPSender` gửi SR khi đang gửi video; repo trước đó chỉ gửi RR.
+
+Đã sửa:
+
+1. `VideoRtpBridge` khóa AU vào payload type bắt đầu bằng Annex-B, bỏ qua và đếm
+   payload phụ (`auxiliaryPackets`); AU mới được phép đổi PT khi có Annex-B.
+2. Video RTCP gửi SR kèm sender info; PLI compound có SR.
+3. RTP extension RapidSync/SVC thành opt-in (`VIDEO_RTP_EXTENSIONS=1`), mặc định
+   tắt vì peer không gửi extension và receiver chưa chắc hiểu X bit.
+4. Teardown outgoing đã confirmed dùng `endcall` thay vì nhánh `cancel` bị đảo.
+5. `/conf` chỉ được coi là gửi thành công khi `error_code == 0`.
+6. UI hiện `Audio mic/ra (RMS)` để phân biệt peer im lặng/mute với lỗi decode.
+
+Test: protocol 48/48, demo 48/48, `tsc --noEmit`, lint, build ESM/UI đều pass.
+Gateway đã restart tại http://127.0.0.1:4317/simple (cần QR login lại).
+
+Bước live tiếp: gọi video mới với peer **bật mic và camera**, xác nhận
+`/conf` trả mã 0, `PT phụ` tăng nhưng `framesReceived` vẫn có IDR, browser
+`Đã hiện` tăng, và peer hiện hình. Nếu outbound vẫn trống, thử
+`VIDEO_RTP_EXTENSIONS=1` để so sánh trực tiếp với Zalo PC.
+
+# Trạng thái camera gửi peer qua /api/voicecall/conf — 2026-10-25
+
+Tiếp tục từ baseline video: RTP/SRTP/H.264 đã đi và về ở biên gateway, nhưng
+Zalo peer vẫn không hiện hình của browser. Đợt này tìm ra một kênh tín hiệu
+native còn thiếu, không phải lỗi RTP.
+
+Đã mở lại đúng binary `ZaloCall` arm64 (slice SHA-256
+`579026a61c75a967582e5bef56e21b9326254f9541dd552205b6be2616043221`, app hash
+`f1ac81228f235e92d480dfe4619d568b0a84a5abd70fc73256dcab5f73aa3f3e`) bằng
+Ghidra 12.1.4 và trích được chuỗi:
+
+- `ZCallInfo::_handleLocalCameraState` (`0x1000c1c44`) gửi
+  `sendOnOffMicCam(calleeId, callId, isOnCam, isOnMic=-1, data="")` mỗi khi
+  capture state đổi (1/3 = camera on, 0/2 = off).
+- `ZCallInfo::UiOnOffCameraEvent` (`0x1000c9e78`) gửi cùng dạng khi người dùng
+  bật/tắt camera.
+- `ZMessageTransfer::sendOnOffMicCam` (`0x10002f808`) và serializer
+  (`0x100026cdc`) tạo JSON `{calleeId, callId, isOnCam, isOnMic, data}` với IPC
+  command 12006; bundle Electron `pc-dist/compact-app-pc` ánh xạ 12006 sang
+  `GET /api/voicecall/conf?params=AES(JSON)`.
+- Phía nhận: `_parseActPartnerCamEvent` (`0x10001d018`) đọc control
+  `onoff_camera` với `params.type == 1`, rồi `receivePartnerCamEvent`
+  (`0x1000cc910`) cập nhật partner camera state cho UI/renderer.
+
+Repo đã thêm `voiceCall.sendOnOffCamMic` (`src/apis/voiceCall.ts`) và
+`ZaloSession.sendCallCameraState`; server gọi `/conf` với
+`isOnCam=1, isOnMic=-1, data=""` ngay khi `independent-confirmed`, cả outgoing
+lẫn incoming, và có action `video-camera` để bật/tắt. Snapshot `/api/status`
+thêm `cameraState`, UI `/simple` hiện dòng “Báo camera peer (/conf)”. Các control
+relay cũ (`0x20/0x07`, `0x20/0x11`) vẫn giữ.
+
+Test: `npm run build:esm` pass; demo suite 47/47 pass (đã sửa test PLI cũ để đọc
+compound RTCP thay vì offset của PLI đơn); lint các file đổi pass; build UI pass.
+
+Evidence Ghidra: `ev_ec3892b76df957ca87e9cd9e4b720246c5b2827afb7ef5525152821884980671`,
+`ev_d0d4b0b3f146c6d1799259a26f958003226c2e5841ff3947d33342f2bcaea6b9`,
+`ev_7dd0cffd01f3f15a5c8290fde5f8b29f8f179b5dab202ae18254aa17ab32257e`.
+
+Bước live bắt buộc: gọi video outgoing mới, xác nhận `zalo-signal` command 12006
+action `conf` success, `/api/status.cameraState.enabled === true`, peer Zalo
+chuyển khỏi trạng thái camera-off và hiện hình. Nếu RTP vẫn tăng mà peer không
+hiện, ghi lại thời điểm `conf` so với keyframe đầu và kiểm tra `onoff_camera`
+phía peer; chưa có bằng chứng runtime cho tới bước đó.
+
 # Tiến thêm RTCP report độc lập — 2026-10-21
 
 > Nhật ký từng bước và tài liệu luồng kết nối/API: [dịch ngược phiên hôm nay](docs/reverse-engineering/zalo-call-re-session-2026-10-21.vi.md), [luồng call, nghe event, answer và end](docs/reverse-engineering/zalo-call-connection-flow.vi.md). Đọc hai file này trước để nắm bằng chứng, API và các điểm còn chặn.

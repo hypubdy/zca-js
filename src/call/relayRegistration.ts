@@ -236,6 +236,40 @@ export class ZrtpRelaySession {
     /** Caller must apply video SRTCP first when negotiated. */
     sendVideoRtcp(rtcp: Uint8Array) { this.sendRelayMedia("videoRtcp", rtcp); }
 
+    /** Forward the native local-camera state (RequestForward subcommand 7=on, 8=off). */
+    sendLocalCameraState(on: boolean, reason = 0) {
+        if (!this.registered) throw new Error("Relay session is not registered");
+        if (typeof on !== "boolean") throw new TypeError("Camera state must be boolean");
+        if (!Number.isInteger(reason) || reason < -0x80000000 || reason > 0x7fffffff)
+            throw new RangeError("Camera-state reason must be int32");
+        const payload = new Uint8Array(4);
+        new DataView(payload.buffer).setInt32(0, reason, true);
+        // Native CallController::vidSetLocalOffCamera(state, reason) maps state=1
+        // (camera active) to subcommand 7 and state=0 (off camera) to subcommand 8.
+        // Request-forward addresses the peer in the token-position field.
+        const bytes = encodeZrtpPacket({ kind: "control", type: 1, version: 1,
+            field0c: 0, field10: 0, field14: this.localUserId,
+            token: this.init.partnerId >>> 0, command: 0x20, subcommand: on ? 0x07 : 0x08, payload });
+        this.socket.send(bytes);
+    }
+
+    /** Forward the native camera on/off state (command 0x20/subcommand 0x11). */
+    sendVideoSuspend(suspended: boolean, reason = 0) {
+        if (!this.registered) throw new Error("Relay session is not registered");
+        if (!Number.isInteger(reason) || reason < -0x8000 || reason > 0x7fff)
+            throw new RangeError("Video suspend reason must be int16");
+        const payload = new Uint8Array(4);
+        const view = new DataView(payload.buffer);
+        view.setUint16(0, suspended ? 1 : 0, true);
+        view.setInt16(2, reason, true);
+        // Request-forward addresses the peer in the token-position field; it
+        // does not use the media relay token there.
+        const bytes = encodeZrtpPacket({ kind: "control", type: 1, version: 1,
+            field0c: 0, field10: 0, field14: this.localUserId,
+            token: this.init.partnerId >>> 0, command: 0x20, subcommand: 0x11, payload });
+        this.socket.send(bytes);
+    }
+
     private sendRelayMedia(kind: "audio" | "audioRtcp" | "video" | "videoRtcp", payload: Uint8Array) {
         if (!this.registered) throw new Error("Relay session is not registered");
         const bytes = encodeZrtpRelayMedia({ kind, token: this.token, payload });

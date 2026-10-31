@@ -75,3 +75,28 @@ describe("compound RTCP report builder", () => {
         expect(wrapped.reportBlock(2, 1020)?.cumulativeLost).toBe(0);
     });
 });
+import { buildRtcpPli, parseCompoundRtcp } from "../src/call/index.js";
+
+describe("video RTCP feedback", () => {
+    test("builds and parses a keyframe PLI", () => {
+        const packet = buildRtcpPli(0x12345678, 0x87654321);
+        expect(packet.length).toBe(12);
+        expect(parseCompoundRtcp(packet)).toEqual([{ packetType: 206, count: 1, senderSsrc: 0x12345678, mediaSsrc: 0x87654321 }]);
+    });
+});
+
+describe("native compound video PLI with sender report", () => {
+    test("carries SR, SDES and PLI when this side has sent RTP", async () => {
+        const { buildCompoundRtcpPli } = await import("../src/call/rtcp.js");
+        const senderInfo = { ntpSeconds: 0x83aa7e80, ntpFraction: 0x80000000, rtpTimestamp: 90000,
+            packetCount: 12, octetCount: 3456 };
+        const packet = buildCompoundRtcpPli(0x11223344, 0x55667788, "zrtc@test", senderInfo);
+        const summaries = parseCompoundRtcp(packet);
+        const sr = summaries.find(item => item.packetType === 200);
+        expect(sr?.senderInfo).toEqual(senderInfo);
+        const pli = summaries.find(item => item.packetType === 206);
+        expect(pli?.senderSsrc).toBe(0x11223344);
+        expect(pli?.mediaSsrc).toBe(0x55667788);
+        expect(summaries.some(item => item.packetType === 202)).toBe(true);
+    });
+});

@@ -55,6 +55,16 @@ test('video diagnostics retain only integer codec IDs from a bounded codec list'
  assert.deepEqual(diagnostic.videoCodecIds,[1,2,3]);
  assert.ok(!JSON.stringify(events).includes('private-codec-session'));
 });
+test('native h264 video capability objects retain name and payload',()=>{
+ const events=[];const engine=new IndependentCall((event,data)=>events.push({event,data}));
+ engine.observe({act:'request',data:{uidFrom:'123456',uidTo:'987654',uidN:'peer',ts:1,
+  params:JSON.stringify({id:12,sessId:'private-h264-session',rtpIP:'192.0.2.7:4200',rtcpIP:'192.0.2.7:4200',
+   codec:'[{"name":"opus/48000/2","payload":113}]',video:{enable:1},
+   extendData:JSON.stringify({callType:1,video:{codec:[{name:'h264',payload:97}]}})})}});
+ const diagnostic=events.find(item=>item.event==='independent-offer').data;
+ assert.deepEqual(diagnostic.videoCodecs,[{name:'h264',payload:97}]);
+ assert.ok(!JSON.stringify(events).includes('private-h264-session'));
+});
 test('explicit callType audio overrides the video capability/request bit',()=>{
  const events=[];const engine=new IndependentCall((event,data)=>events.push({event,data}));
  engine.observe({act:'request',data:{uidFrom:'123456',uidTo:'987654',uidN:'peer',ts:1,
@@ -123,7 +133,7 @@ test('answer trial builds explicit supported capabilities and confirms only matc
  const answer=engine.buildAcceptedAnswer();
  assert.deepEqual(answer,{callerId:'peer-name',callId:'42',status:0,
   codec:'[{"name":"opus/48000/2","payload":113,"frmPtime":20,"dynamicFptime":0}]',
-  rtpAddress:'192.0.2.10:4200',rtcpAddress:'192.0.2.10:4200',session_id:'synthetic-private-session',
+  rtpAddress:'192.0.2.10:4200',rtcpAddress:'192.0.2.10:4200',session_id:'synthetic-private-session',session:'synthetic-private-session',
   extendData:'{"packetMode":2,"srtpMode":1,"srtcp":0,"sP2P":0,"gccMode":0,"gccAudio":false,"gccSVLR":false,"gccEarlyCall":false,"tpType":0,"spTcp":0}'});
  engine.markAnswerSignalSent();
  engine.observe({act:'answer_ack',data:{callId:41}});assert.equal(engine.status().confirmed,false);
@@ -205,7 +215,7 @@ test('caller relay registration uses 401 ids/session and closes before discardin
  assert.deepEqual(init,{isCaller:true,userId:0xfffffff4,partnerId:34,callId:55,sessionId:'private-outgoing-session-1234567890',subcommand:2});
  assert.deepEqual(endpoint,{address:'127.0.0.1',port:1000});assert.equal(typeof options.onError,'function');
  assert.equal(result.registered,true);assert.equal(result.ringing,false);assert.equal(engine.status().outgoingRelayRegistered,true);
- assert.deepEqual(engine.activeCall(),{uidN:'34',callId:55,direction:'outgoing',stage:'relay-registered'});
+ assert.deepEqual(engine.activeCall(),{uidN:'34',callId:55,callType:1,direction:'outgoing',stage:'relay-registered'});
  assert.equal(engine.status().browserBridgeAvailable,true);
  const mediaRequest=engine.buildOutgoingRequest();
  assert.deepEqual(mediaRequest,{calleeId:'34',callId:'55',rtpAddress:'127.0.0.1:1000',rtcpAddress:'127.0.0.1:1001',
@@ -231,4 +241,41 @@ test('caller answer parsing keeps negotiated fields private and does not confirm
  const event=events.find(item=>item.event==='independent-outgoing-answer');
  assert.deepEqual(event.data.codecs,[{name:'opus/16000/1',payload:112,frmPtime:20,dynamicFptime:0}]);
  assert.ok(!JSON.stringify(events).includes('must-not-log'));
+});
+test('caller video relay keeps native callType 1 video capability in outgoing request',async()=>{
+ const engine=new IndependentCall(()=>{}); let request, videoRtcp;
+ engine.openRelay=async(...args)=>{request=args; return {registered:true,sendVideo(){},sendVideoRtcp(data){videoRtcp=data;},sendAudio(){},sendAudioRtcp(){},close(){}};};
+ const preflight={status:0,fromId:-12,toId:34,callId:56,sessionId:'private-video-session-1234567890',
+  zrtcConfig:{srtpMode:1,srtpRTCP:0,srtpKey:'abcdefghijklmnopqrstuvwxyz1234',packetMode:2},
+  servers:[{rtpAddress:'127.0.0.1:1000',rtcpAddress:'127.0.0.1:1001',relayTime:1}]};
+ await engine.registerOutgoingRelay(preflight,'34',3);
+ assert.equal(engine.outgoing.callType,3);
+ assert.equal(engine.outgoing.capabilities.callType,1);
+ assert.deepEqual(engine.outgoing.capabilities.video.codec,[{name:'h264',payload:97}]);
+ assert.equal(engine.buildOutgoingRequest().extendData.includes('"callType":1'),true);
+ assert.equal('video' in engine.buildOutgoingRequest(),false,'params.video is opt-in after the peer regression');
+ assert.equal(request[0].subcommand,2);
+ assert.equal(engine.status().videoPacketMode,2);
+ const rtp=engine.videoBridge.packetizer.packetize(Uint8Array.from([0,0,0,1,0x65,1,2,3]),90000)[0];
+ assert.equal(new DataView(rtp.buffer).getUint32(8),preflight.fromId>>>0,'outgoing video RTP uses caller SSRC');
+ assert.equal(engine.videoBridge.remoteVideoSsrc,preflight.toId,'remote video SSRC is callee');
+ engine.sendVideoPli();
+ const rtcpSummaries=parseCompoundRtcp(videoRtcp);
+ const pli=rtcpSummaries.find(item=>item.packetType===206);
+ assert.ok(pli,'PLI is carried in the compound RTCP packet');
+ assert.equal(pli.senderSsrc,preflight.fromId>>>0,'PLI sender is caller');
+ assert.equal(pli.mediaSsrc,preflight.toId,'PLI media SSRC is callee');
+ assert.ok(rtcpSummaries.some(item=>item.packetType===200||item.packetType===201),'PLI is compound with an SR/RR');
+ engine.clear();
+});
+test('video answer trial builds the observed H264 capability when the bridge is ready',()=>{
+ const engine=new IndependentCall(()=>{});
+ engine.pending={at:Date.now(),offer:{callId:77,uidFrom:'123',uidTo:'456',uidN:'peer-name',videoRequested:true,
+  videoCodecs:[{name:'h264',payload:97}],sessionId:'synthetic-video-session',rtpAddress:'192.0.2.10:4200',rtcpAddress:'192.0.2.10:4200',
+  extendData:JSON.stringify({srtpMode:1,srtcp:0,packetMode:2}),zrtcConfig:{srtpMode:1,packetMode:2},
+  codecs:[{name:'opus/48000/2',payload:113,frmPtime:20,dynamicFptime:0}]} };
+ engine.relay={registered:true,relay:{address:'192.0.2.10',port:4200}}; engine.opus={}; engine.srtpSend={}; engine.videoBridge={};
+ engine.codec={name:'opus/48000/2',payloadType:113}; engine.srtpProfile=1; engine.srtcpEnabled=false;
+ const answer=engine.buildAcceptedAnswer(); const capabilities=JSON.parse(answer.extendData);
+ assert.equal(capabilities.callType,1); assert.deepEqual(capabilities.video.codec,[{name:'h264',payload:97}]);
 });

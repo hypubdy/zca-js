@@ -1,7 +1,7 @@
 // Experimental independent building blocks, not a working Zalo call engine.
 export { ZRTP_MEDIA_COMMAND, decodeZrtpPacket, encodeZrtpPacket } from "./zrtpPacket.js";
 export type { ZrtpPacket, ZrtpMediaPacket, ZrtpP2pPacket, ZrtpControlPacket } from "./zrtpPacket.js";
-export { parseZrtcIncomingOffer, parseZrtcOutgoingPreflight, parseZrtcOutgoingAnswer, parseZrtcAudioCodecs, buildZrtcAcceptedAnswer } from "./negotiation.js";
+export { parseZrtcIncomingOffer, parseZrtcOutgoingPreflight, parseZrtcOutgoingAnswer, parseZrtcAudioCodecs, buildZrtcAcceptedAnswer, buildZrtcVideoCapabilities, ZRTC_NATIVE_H264_VIDEO_CODEC } from "./negotiation.js";
 export type { ZrtcIncomingOffer, ZrtcOutgoingPreflight, ZrtcOutgoingAnswer, ZrtcAudioCodec, ZrtcAcceptedAnswer } from "./negotiation.js";
 export { ZRTC_SRTP_PROFILES, selectZrtcSrtpKey, negotiateZrtcSrtpMode } from "./srtpParameters.js";
 export type { ZrtcSrtpMode } from "./srtpParameters.js";
@@ -11,11 +11,12 @@ export { encodeZrtpRelayMedia, decodeZrtpRelayMedia } from "./relayMediaPacket.j
 export type { ZrtpRelayMedia, ZrtpRelayMediaKind } from "./relayMediaPacket.js";
 export { parseRtpPacket, buildRtpAudioPacket, RtpAudioSender } from "./rtpAudio.js";
 export { Vp8RtpPacketizer, Vp8RtpDepacketizer } from "./rtpVp8.js";
+export { H264RtpPacketizer, H264RtpDepacketizer, splitH264Nals } from "./rtpH264.js";
 export { VideoRtpBridge } from "./videoRtpBridge.js";
 export type { ParsedRtpPacket, BuildRtpAudioPacket, RtpAudioSenderOptions } from "./rtpAudio.js";
 export { SrtcpContext } from "./srtcp.js";
 export type { SrtcpOptions } from "./srtcp.js";
-export { buildCompoundRtcpReport, parseCompoundRtcp, RtpReceptionStats } from "./rtcp.js";
+export { buildCompoundRtcpReport, buildCompoundRtcpPli, buildRtcpPli, parseCompoundRtcp, RtpReceptionStats } from "./rtcp.js";
 export type { BuildCompoundRtcpReportOptions, ParsedRtcpPacketSummary, RtcpReportBlock, RtcpSenderInfo } from "./rtcp.js";
 export { deriveSrtpRtpKeys, applySrtpAesCm, SrtpRtpContext } from "./srtpRtp.js";
 export type { SrtpRtpKeys, SrtpPacketIndex, SrtpRtpOptions } from "./srtpRtp.js";

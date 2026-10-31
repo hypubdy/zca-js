@@ -70,6 +70,7 @@ describe("independent negotiation schemas (static fixtures only)", () => {
             codec: '[{"name":"opus/16000/1","payload":112,"frmPtime":20,"dynamicFptime":0}]',
             rtpAddress: "198.51.100.10:10000", rtcpAddress: "198.51.100.10:10001",
             session_id: "synthetic-session-01234567890123456789",
+            session: "synthetic-session-01234567890123456789",
             extendData: '{"platform":2,"srtpMode":1,"srtcp":0}',
         });
         expect(() => buildZrtcAcceptedAnswer({ offer, codecs: [], rtpAddress: "a", rtcpAddress: "b", capabilities: {} })).toThrow("negotiated codecs");
