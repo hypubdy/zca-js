@@ -56,7 +56,8 @@ jobs:
 
             - name: Publish to GitHub Packages
               env:
-                  NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  # Classic PAT with write:packages; GITHUB_TOKEN is rejected for new packages on this fork.
+                  NODE_AUTH_TOKEN: ${{ secrets.PACKAGES_TOKEN || secrets.GITHUB_TOKEN }}
               run: |
                   npm publish --tag latest
                   echo "Published @hypubdy/zca-js@${{ steps.meta.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
