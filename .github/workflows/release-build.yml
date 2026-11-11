@@ -54,6 +54,14 @@ jobs:
                       publishConfig.registry="https://npm.pkg.github.com"
                   echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
+            - name: Verify PACKAGES_TOKEN
+              env:
+                  T: ${{ secrets.PACKAGES_TOKEN }}
+              run: |
+                  if [ -z "$T" ]; then echo "::warning::PACKAGES_TOKEN is missing; falling back to GITHUB_TOKEN"; exit 0; fi
+                  echo "scopes: $(curl -sI -H "Authorization: token $T" https://api.github.com/user | grep -i '^x-oauth-scopes' | cut -d: -f2-)"
+                  echo "login: $(curl -s -H "Authorization: token $T" https://api.github.com/user | node -p 'JSON.parse(require("fs").readFileSync(0)).login')"
+
             - name: Publish to GitHub Packages
               env:
                   # Classic PAT with write:packages; GITHUB_TOKEN is rejected for new packages on this fork.
