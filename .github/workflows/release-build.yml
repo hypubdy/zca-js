@@ -14,7 +14,8 @@ jobs:
     build:
         runs-on: ubuntu-latest
         permissions:
-            contents: write
+            contents: read
+            packages: write
 
         steps:
             - uses: actions/checkout@v4
@@ -23,6 +24,8 @@ jobs:
               uses: actions/setup-node@v4
               with:
                   node-version: "20.x"
+                  registry-url: "https://npm.pkg.github.com"
+                  scope: "@hypubdy"
 
             - name: Use Bun
               uses: oven-sh/setup-bun@v2
@@ -41,31 +44,19 @@ jobs:
             - name: Test call module
               run: npm run test:call
 
-            - name: Pack package
-              id: pack
+            - name: Set GitHub Packages metadata
+              id: meta
               run: |
-                  TARBALL=$(npm pack --silent | tail -n 1)
-                  echo "tarball=$TARBALL" >> "$GITHUB_OUTPUT"
-                  echo "Packed $TARBALL"
+                  BASE=$(node -p "require('./package.json').version")
+                  VERSION="${BASE}-build.${{ github.run_number }}"
+                  npm pkg set name="@hypubdy/zca-js" version="$VERSION" \
+                      repository.url="git+https://github.com/${{ github.repository }}.git" \
+                      publishConfig.registry="https://npm.pkg.github.com"
+                  echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-            - name: Upload package artifact
-              uses: actions/upload-artifact@v4
-              with:
-                  name: zca-js-${{ github.sha }}
-                  path: ${{ steps.pack.outputs.tarball }}
-                  if-no-files-found: error
-                  retention-days: 30
-
-            - name: Publish GitHub Release
+            - name: Publish to GitHub Packages
               env:
-                  GH_TOKEN: ${{ github.token }}
+                  NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
               run: |
-                  VERSION=$(node -p "require('./package.json').version")
-                  TAG="v${VERSION}-build.${{ github.run_number }}"
-                  cp "${{ steps.pack.outputs.tarball }}" zca-js.tgz
-                  gh release create "$TAG" zca-js.tgz \
-                      --target "${{ github.sha }}" \
-                      --title "zca-js $TAG" \
-                      --notes "Built from release@${{ github.sha }}" \
-                      --prerelease
-                  echo "Install: https://github.com/${{ github.repository }}/releases/download/$TAG/zca-js.tgz" >> "$GITHUB_STEP_SUMMARY"
+                  npm publish --tag latest
+                  echo "Published @hypubdy/zca-js@${{ steps.meta.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
