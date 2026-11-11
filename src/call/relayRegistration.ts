@@ -1,7 +1,7 @@
 import dgram from "node:dgram";
 import { isIP } from "node:net";
 import { decodeZrtpPacket, encodeZrtpPacket, type ZrtpControlPacket } from "./zrtpPacket.js";
-import { decodeZrtpRelayMedia, encodeZrtpRelayMedia } from "./relayMediaPacket.js";
+import { decodeZrtpRelayMedia, encodeZrtpRelayMedia, type ZrtpRelayMedia } from "./relayMediaPacket.js";
 
 export type ZrtpRelayInit = {
     isCaller: boolean;
@@ -94,7 +94,7 @@ export type ZrtpRelaySessionOptions = {
     maxAttempts?: number;
     responseTimeoutMs?: number;
     keepaliveEveryMs?: number;
-    onMedia?: (packet: import("./relayMediaPacket.js").ZrtpRelayMedia) => void;
+    onMedia?: (packet: ZrtpRelayMedia) => void;
     onError?: (error: Error) => void;
 };
 

@@ -13,3 +13,8 @@ tsconfig.json
 .vscode
 
 scripts
+
+.re
+tests
+docs/reverse-engineering
+CALL_STREAM_HANDOFF.md
