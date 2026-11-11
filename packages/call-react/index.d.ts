@@ -1,38 +1,21 @@
-export type GatewayState = "disconnected" | "connecting" | "connected";
-export type CallState =
-    | "idle"
-    | "preparing"
-    | "relay-ready"
-    | "inviting"
-    | "calling"
-    | "incoming"
-    | "answering"
-    | "ringing"
-    | "connecting"
-    | "connected"
-    | "ending"
-    | "ended"
-    | "error";
-
-export interface ZaloCallState {
-    gateway: GatewayState;
-    zalo: string;
+export type CallState = "idle" | "preparing" | "relay-ready" | "inviting" | "calling" | "incoming" | "answering" | "ringing" | "connecting" | "connected" | "ending" | "ended" | "error";
+export interface CallStateSnapshot {
+    gateway: "disconnected" | "connecting" | "connected";
     call: CallState;
     direction: "incoming" | "outgoing" | null;
     media: string;
-    incoming: { action: string; at: number; status: "ringing" } | null;
-    independent: Record<string, unknown>;
-    cameraState: { enabled: boolean; responseCode?: number | null; at?: string } | null;
+    incoming: Record<string, unknown> | null;
     stats: Record<string, unknown> | null;
-    videoClientStats: { received: number; decoded: number; errors: number; lastError: string | null; at?: string } | null;
-    qr: string | null;
+    videoClientStats: Record<string, unknown> | null;
     error: string | null;
     lastEvent: { event: string; data: unknown; at: number } | null;
 }
-
-export interface ZaloCallClientOptions {
+export interface CallEvent { type: string; [key: string]: unknown }
+export interface CallClientOptions {
+    /** Application-owned call transport. Credentials belong outside this client. */
     gatewayUrl?: string;
     configUrl?: string;
+    transport?: CallTransport;
     rpcTimeoutMs?: number;
     iceTimeoutMs?: number;
     reconnectMs?: number;
@@ -49,48 +32,52 @@ export interface ZaloCallClientOptions {
     MediaStreamTrackProcessor?: typeof MediaStreamTrackProcessor;
     EncodedVideoChunk?: typeof EncodedVideoChunk;
 }
-
+export declare class CallTransport {
+    request(action: string, payload?: Record<string, unknown>): Promise<unknown>;
+    subscribe(handler: (event: CallEvent | string) => void): () => void;
+}
+export declare class GatewayTransport {
+    constructor(options: Record<string, unknown>);
+    connect(): Promise<void>;
+    disconnect(): void;
+    request(action: string, payload?: Record<string, unknown>): Promise<unknown>;
+    subscribe(handler: (event: CallEvent | string) => void): () => void;
+}
 export declare class ZaloCallClient {
-    constructor(options?: ZaloCallClientOptions);
-    readonly state: ZaloCallState;
-    socket: unknown;
-    getSnapshot(): ZaloCallState;
+    constructor(options?: CallClientOptions);
+    readonly state: CallStateSnapshot;
+    getSnapshot(): CallStateSnapshot;
     subscribe(listener: () => void): () => void;
     onEvent(listener: (event: string, data: unknown) => void): () => void;
     connect(): Promise<void>;
-    ensureConnected(): Promise<void>;
     disconnect(): void;
     destroy(): void;
-    rpc(action: string, data?: Record<string, unknown>): Promise<any>;
-    call(calleeId: string, options?: { callType?: 1 | 3 }): Promise<{ preflight: any; invite: any }>;
-    startVideoCapture(options?: { width?: number; height?: number; frameRate?: number }): Promise<any>;
-    stopVideoCapture(): Promise<void>;
-    startVideoDecoder(options: { codec?: string; onFrame: (frame: VideoFrame) => void }): any;
-    stopVideoDecoder(): void;
-    sendVideoFrame(frame: Uint8Array, timestamp90k: number, keyFrame?: boolean): void;
-    answer(): Promise<any>;
-    hangup(): Promise<any>;
+    call(peerId: string, options?: { callType?: 1 | 3 }): Promise<unknown>;
+    answer(): Promise<unknown>;
+    hangup(): Promise<unknown>;
     setMicrophoneMuted(muted: boolean): void;
     setPlaybackMuted(muted: boolean): void;
     setVolume(volume: number): void;
+    startVideoCapture(options?: { width?: number; height?: number; frameRate?: number }): Promise<unknown>;
+    stopVideoCapture(): Promise<void>;
+    startVideoDecoder(options: { codec?: string; onFrame: (frame: VideoFrame) => void }): unknown;
+    stopVideoDecoder(): void;
+    sendVideoFrame(frame: Uint8Array, timestamp90k: number, keyFrame?: boolean): void;
 }
-
-export declare function createZaloCallClient(options?: ZaloCallClientOptions): ZaloCallClient;
-
-/** Minimal façade: connect on demand, one call, audio handled for you. */
-export interface ZaloCallFacade {
+export declare function assertCallTransport(transport: unknown): CallTransport;
+export declare function createZaloCallClient(options?: CallClientOptions): ZaloCallClient;
+export interface CallFacade {
     client: ZaloCallClient;
     connect(): Promise<void>;
-    call(calleeId: string, options?: { callType?: 1 | 3 }): ReturnType<ZaloCallClient["call"]>;
-    callAudio(calleeId: string): ReturnType<ZaloCallClient["call"]>;
-    answer(): ReturnType<ZaloCallClient["answer"]>;
-    hangup(): ReturnType<ZaloCallClient["hangup"]>;
+    call(peerId: string, options?: { callType?: 1 | 3 }): Promise<unknown>;
+    callAudio(peerId: string): Promise<unknown>;
+    answer(): Promise<unknown>;
+    hangup(): Promise<unknown>;
     setMuted(muted: boolean): void;
     setVolume(volume: number): void;
-    onState(listener: (state: ZaloCallState) => void): () => void;
+    onState(listener: (state: CallStateSnapshot) => void): () => void;
     onEvent(listener: (event: string, data: unknown) => void): () => void;
-    readonly state: ZaloCallState;
+    readonly state: CallStateSnapshot;
     destroy(): void;
 }
-
-export declare function createZaloCall(options?: ZaloCallClientOptions): ZaloCallFacade;
+export declare function createZaloCall(options?: CallClientOptions): CallFacade;

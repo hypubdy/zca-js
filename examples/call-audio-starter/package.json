@@ -1,0 +1,16 @@
+{
+  "name": "zca-call-audio-starter",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "Browser mic/speaker ⇄ Zalo voice call, using only zca-js/call + zca-js/call-webrtc",
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@roamhq/wrtc": "^0.10.0",
+    "ws": "^8.18.0",
+    "zca-js": "file:../.."
+  }
+}

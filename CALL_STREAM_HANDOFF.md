@@ -1,3 +1,21 @@
+# zca-js/call public API — live trial 1 — 2026-11-11
+
+Lib: `src/call/voice/**` → `zca-js/call`, `zca-js/call-webrtc` (docs/call-api.md).
+Offline: `npm run test:call` 21/21 (macOS arm64), Docker node:22-bookworm
+linux/amd64: 20 pass + 1 skip without `@roamhq/wrtc`, 21/21 with it.
+`@roamhq/wrtc` 0.10.0 segfaults at normal exit when a PC has an
+RTCAudioSource track (macOS + Linux); explicit `process.exit()` avoids it.
+
+Live (starter, CALL_DEBUG=1), one outgoing call, 13.5 s, ended `local-hangup`:
+- States observed: dialing → connecting → connected → ended. **No `ringring`
+  control arrived**, so `ringing` was never entered.
+- Peer sent `mute_audio` with params keys `receiverId, id, type, ts`; the lib
+  does not yet interpret `type` and reported `remoteMuted: true`.
+- User reported the call "works"; two-way audio and stats were not recorded.
+Not yet tried: remote hangup, incoming answer, reject, cancelled,
+answered-elsewhere, busy, back-to-back calls, Ubuntu live run.
+Next: log every control act at debug, parse `mute_audio.type`, rerun §4.
+
 # Inbound video đã hiện; outbound chuyển sang NAL-aligned — 2026-10-25
 
 Cuộc gọi live xác nhận sửa đường nhận: 472 gói → 453 AU, browser nhận 453/giải mã
@@ -238,10 +256,10 @@ quảng cáo capability hay bật nhận cuộc gọi.
 
 ---
 
-## Yêu cầu ưu tiên hiện tại: bỏ hoàn toàn ZaloCall — 2026-10-21
+## Trạng thái hiện tại: dự án duy nhất `call-audio-starter`
 
-Mọi kiến trúc sidecar/native UI/process tap phía dưới đã bị yêu cầu này thay thế.
-Đọc docs/reverse-engineering/independent-call-engine.md trước: checkpoint mới có code, bằng chứng và bước tiếp theo.
+Các ghi chú lịch sử về ZaloCall/helper/process tap phía dưới chỉ để tham khảo, không phải kiến trúc runtime hiện tại.
+Source chạy hiện nằm trong `examples/call-audio-starter/`; thư viện core vẫn ở `src/call/` và được build trực tiếp vào starter. Không dùng một demo server tách rời.
 
 Đã RE sâu negotiation/relay/SRTP, triển khai src/call/{negotiation,zrtpPacket,relayRegistration,srtpParameters,srtpRtp,index}.ts. Export experimentalCallProtocol. 21 protocol/signaling tests/129 assertions pass, gồm RFC3711 KDF/AES-CM vectors và UDP relay localhost, không dùng engine native. Ba báo cáo mới zrtc-{negotiation,transport,srtp}-findings.md có địa chỉ assembly và unknowns.
 
@@ -249,7 +267,7 @@ Tiếp tục RE static 2026-10-21: thêm `relayMediaPacket.ts` codec relay media
 
 Đợt triển khai hiện tại thêm `ZrtpRelaySession` (UDP socket bền, retry giới hạn, keepalive6s, TX/RX relay envelope, relay-end khi dọn), `rtpAudio.ts` (parse RTP2, CSRC/extension/padding, sender sequence/timestamp), `opus-gateway.mjs` (libopus WASM và PCM conversion cho 16k mono/48k stereo) và `srtcp.ts` (primitive mới nhưng chưa test/enable). Nút demo “Kết nối relay độc lập” gọi persistent registration có chủ ý; vẫn không answer/mở mic. `bun run build:esm`, JS syntax checks và demo `npm run build` pass. Chưa chạy test theo yêu cầu triển khai hiện tại. Chưa có live answer/speech độc lập, SRTCP interop, profile3/noSeq hay browser-to-Zalo audio bridge.
 
-Backend mặc định examples/call-web-demo/server.mjs không import/khởi chạy NativeHelper, không dùng IPC/AX/process tap/CoreAudio. helper RPC cũ bị từ chối; mode Zalo media chưa thực hiện nên nút Nhận disabled. Mode tone/echo WebRTC còn hoạt động; build demo chỉ build React, không compile native bridge. Adapter independent-call.mjs chỉ đọc offer và cho probe relay explicit từ browser; probe đóng socket và KHÔNG nhận call. Không tự quay về engine Mac.
+Backend mặc định examples/call-audio-starter/server.mjs không import/khởi chạy NativeHelper, không dùng IPC/AX/process tap/CoreAudio. helper RPC cũ bị từ chối; mode Zalo media chưa thực hiện nên nút Nhận disabled. Mode tone/echo WebRTC còn hoạt động; build demo chỉ build React, không compile native bridge. Adapter independent-call.mjs chỉ đọc offer và cho probe relay explicit từ browser; probe đóng socket và KHÔNG nhận call. Không tự quay về engine Mac.
 
 Đã đăng nhập lại backend độc lập thành công. Cần live incoming để kiểm tra offer/relay; chưa có incoming mới trong cửa sổ theo dõi. Secrets trong RAM, không lưu. 10 demo tests, browser mic-controls và full browser tone/echo/mobile pass. Backend nativeEngine=false, legacy helper-start bị từ chối; không gọi đây là hoàn thiện call.
 
@@ -259,7 +277,7 @@ Tiếp theo: kiểm tra offer/capability đúng với cuộc incoming được p
 
 ## Tiếp tục nối audio độc lập — 2026-10-21
 
-Đã nối bridge mới trong `examples/call-web-demo`: WebRTC `RTCAudioSink` nhận PCM mic từ browser; callback đi qua `IndependentCall.sendBrowserPcm()` → Opus encoder → RTP/SRTP → relay. Hướng RX unprotect/authenticate → Opus decode → `RTCAudioSource` queue → WebRTC/browser speaker. `confirmed` vẫn gate mic TX. Server chỉ mở mode Zalo browser leg nếu relay, codec và RTP SRTP context sẵn sàng; khi stop thì gỡ decoded-PCM callback.
+Đã nối bridge mới trong `examples/call-audio-starter`: WebRTC `RTCAudioSink` nhận PCM mic từ browser; callback đi qua `IndependentCall.sendBrowserPcm()` → Opus encoder → RTP/SRTP → relay. Hướng RX unprotect/authenticate → Opus decode → `RTCAudioSource` queue → WebRTC/browser speaker. `confirmed` vẫn gate mic TX. Server chỉ mở mode Zalo browser leg nếu relay, codec và RTP SRTP context sẵn sàng; khi stop thì gỡ decoded-PCM callback.
 
 UI giờ cho chuẩn bị browser bridge khi `browserBridgeAvailable`, nhưng `mediaReady` luôn false và “Nhận cuộc gọi” vẫn khóa. Lý do cụ thể: call path từ chối SRTCP, chưa có `extendData` capability builder tương thích/được peer chấp nhận, nên không gửi answer giả. Chưa có jitter buffer/RTCP lifecycle và timestamp/SSRC interop chưa được xác nhận. File README, roadmap và checkpoint đã cập nhật để phân biệt bridge code với cuộc gọi thật.
 
@@ -330,7 +348,7 @@ nhận sự kiện: listener đã nhận được request/cancel.
 
 Đã sửa frontend để hiện banner cuộc gọi đến độc lập với media, xử lý cancel,
 timeout và phục hồi lịch sử từ snapshot khi reload. File mới:
-`examples/call-web-demo/web/call-notification.mjs`; có 2 test pass tại
+`examples/call-audio-starter/web/call-notification.mjs`; có 2 test pass tại
 `test/call-notification.test.mjs`. Build đã cập nhật, không restart backend
 để giữ phiên đăng nhập memory. Người dùng cần reload trang để nhận JS mới.
 Không có nút Answer giả: vẫn thông báo rõ audio bridge chưa bật và nhận native
@@ -434,7 +452,7 @@ từ ứng dụng Zalo, không đặt cuộc gọi thật trong các trial.
 
 ### Demo trình duyệt
 
-Demo tại **`examples/call-web-demo/`**, React + esbuild, Node + `@roamhq/wrtc`
+Demo tại **`examples/call-audio-starter/`**, React + esbuild, Node + `@roamhq/wrtc`
 0.10.0, WebSocket control và worker CoreAudio viết bằng C.
 
 Đã pass kiểm thử Chrome thật (headless, nguồn tone và fake microphone):
@@ -456,43 +474,31 @@ bên kia.** RTP RTT localhost ~0 ms không phải độ trễ thoại end-to-end
 
 Kết quả đã lưu, không phải lời mô tả dự kiến:
 
-- `examples/call-web-demo/verification.json` — kết quả đã lưu trong source.
-- `examples/call-web-demo/artifacts/browser-results.json` — raw measurement,
+- `examples/call-audio-starter/verification.json` — kết quả đã lưu trong source.
+- `examples/call-audio-starter/artifacts/browser-results.json` — raw measurement,
   ignored Git, có thể không còn ở session sau.
-- `examples/call-web-demo/artifacts/demo-desktop.png`, `demo-tone.png`,
+- `examples/call-audio-starter/artifacts/demo-desktop.png`, `demo-tone.png`,
   `demo-echo.png`, `demo-virtual.png`, `demo-mobile.png` — screenshot ignored.
 - `npm test` trong demo: **3 pass, 0 fail**, gồm một test WebRTC/ICE/DTLS/audio
   thật, không mock transport.
 - TypeScript repo: `npx tsc --noEmit` pass.
 - Test signaling: `bun test ./test/voiceCall.ts` từng pass 2 test offline.
 
-## 4. Chạy lại demo
+## 4. Chạy lại starter hiện tại
 
-Tại lúc bàn giao, server đang lắng nghe `127.0.0.1:4317`, đã mở Chrome ở
-`http://localhost:4317`. PID lúc kiểm tra là `6138`; **đừng dùng PID này để kill
-ở session sau nếu chưa xác minh lại**.
-
-Kiểm tra server trước, không khởi chạy trùng:
+Chỉ còn một ứng dụng demo: `examples/call-audio-starter`. Từ root repo, build thư viện ZCA-JS nếu `dist/index.js` chưa tồn tại, rồi chạy:
 
 ```sh
-lsof -nP -iTCP:4317 -sTCP:LISTEN
-```
-
-Nếu cần cài/build lại:
-
-```sh
-cd /Users/tunv/zca-js
-# Nếu root dependencies/dist chưa có:
-npm ci --ignore-scripts
-npm run build:esm
-
-cd examples/call-web-demo
-npm ci
+bun run build
+cd examples/call-audio-starter
+npm install
 npm run build
 npm start
 ```
 
-Mở **http://localhost:4317**. Trạng thái mặc định chưa mở mic và chưa login.
+Mở `http://127.0.0.1:4320`; liên kết QR, chọn bạn và gọi audio. Browser mic/WebRTC đi tới media bridge cùng backend; credential và relay secrets không xuống FE.
+
+Kiểm tra protocol/unit suites bằng `npm test`, `npm run test:media`, `npm run test:protocol`. Gọi thật vẫn cần thiết bị/peer nhận phối hợp; HTTP/API acceptance không tự chứng minh cuộc gọi đã đổ chuông hoặc có audio hai chiều.
 
 - Chọn **Thử hai chiều** + **Tone 440 Hz**, rồi **Bắt đầu thử âm thanh** để thử
   không cần quyền mic.
@@ -506,7 +512,7 @@ Mở **http://localhost:4317**. Trạng thái mặc định chưa mở mic và c
 Kiểm thử (server phải chạy trước browser test):
 
 ```sh
-cd /Users/tunv/zca-js/examples/call-web-demo
+cd /Users/tunv/zca-js/examples/call-audio-starter
 npm test
 npm run test:browser
 ```
@@ -534,24 +540,20 @@ WebRTC test không kết nối trong sandbox nhưng pass ngoài sandbox.
 - `src/apis.ts`: đăng ký factory.
 - `test/voiceCall.ts`: payload và mã hóa offline.
 
-### Demo
+### Dự án duy nhất: `examples/call-audio-starter`
 
 | File | Trách nhiệm |
 | --- | --- |
-| `server.mjs` | HTTP static + WebSocket RPC, session ownership, localhost/origin checks, native/media lifecycle |
-| `media.mjs` | `RTCAudioSink`/`RTCAudioSource`, PCM queue, 10 ms pacing, bridge subprocess |
-| `pcm.mjs` | Queue bounded, RMS, downmix/resample demo |
-| `native/pcm-bridge.c` | CoreAudio virtual-only, stdin/stdout PCM16LE mono 48 kHz, rings/threads, stats stderr |
-| `build-native.mjs` | Clang build thành `.runtime/pcm-bridge` |
-| `helper.mjs` | Đọc IPC constant từ ASAR, private Unix sockets, AES/framing/ACK queue, start/init/devices/select/stop |
-| `zalo-session.mjs` | Adapter opt-in QR login + control/signaling; **chưa xác minh Zalo thật** |
-| `web/main.jsx`, `web/style.css` | Giao diện React, mic/tone/WebRTC, waveform, trạng thái, QR/experimental controls |
-| `test/browser.mjs` | Chrome automation, ba đường audio + fake mic + helper + cleanup/mobile |
-| `test/webrtc.test.mjs` | Audio qua hai WebRTC peers thật |
-| `README.md` | Hướng dẫn dùng và giới hạn chi tiết |
+| `server.mjs` | HTTP action API, WebSocket event/media-frame, sở hữu media session theo browser |
+| `src/call-backend.mjs` | ZCA session, incoming offer, outgoing preflight/relay, accept/end và WebRTC bridge orchestration |
+| `backend/media.mjs` | `RTCAudioSink`/`RTCAudioSource`, PCM queue/pacing, WebRTC server leg |
+| `backend/opus-gateway.mjs`, `backend/independent-call.mjs` | Opus, UDP Zalo relay, RTP/SRTP, answer/ACK gates |
+| `backend/zalo-session.mjs` | QR login, ZCA listener và voice signaling |
+| `web/app.jsx`, `web/transport.js` | React `useCall`, HTTP command transport và WS realtime events |
+| `backend/call-engine` build output | Build được tạo trực tiếp từ canonical `src/call/*.ts` |
+| `test/` | HTTP/backend/media tests và RFC RTP/SRTP/ZRTP regression tests |
 
-Demo dependencies tách trong package riêng; không thêm React/WebRTC vào root
-library. `.runtime/`, `dist/`, `artifacts/`, `node_modules/` của demo ignored.
+Credential/session/relay state giữ ở backend; SDK client chỉ nắm browser media và UI state.
 
 ## 6. Native IPC đã khôi phục
 

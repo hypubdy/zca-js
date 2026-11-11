@@ -1,13 +1,11 @@
-import type { ZaloCallClient, ZaloCallClientOptions, ZaloCallState } from "./index.js";
-
-export interface UseZaloCallResult {
-    state: ZaloCallState;
+import type { CallClientOptions, CallStateSnapshot, ZaloCallClient } from "./index.js";
+export interface UseCallResult {
+    state: CallStateSnapshot;
     client: ZaloCallClient;
-    call(calleeId: string, options?: { callType?: 1 | 3 }): ReturnType<ZaloCallClient["call"]>;
-    /** Audio call shortcut; microphone and speakers are prepared automatically. */
-    callAudio(calleeId: string): ReturnType<ZaloCallClient["call"]>;
-    answer(): ReturnType<ZaloCallClient["answer"]>;
-    hangup(): ReturnType<ZaloCallClient["hangup"]>;
+    call(peerId: string, options?: { callType?: 1 | 3 }): Promise<unknown>;
+    callAudio(peerId: string): Promise<unknown>;
+    answer(): Promise<unknown>;
+    hangup(): Promise<unknown>;
     setMicrophoneMuted(muted: boolean): void;
     setMuted(muted: boolean): void;
     setPlaybackMuted(muted: boolean): void;
@@ -16,8 +14,5 @@ export interface UseZaloCallResult {
     online: boolean;
     inCall: boolean;
 }
-
-export declare function useZaloCall(options?: ZaloCallClientOptions): UseZaloCallResult;
-
-/** Alias kept for applications that prefer the shorter name. */
-export declare const useCall: typeof useZaloCall;
+export declare function useCall(options?: CallClientOptions): UseCallResult;
+export declare const useZaloCall: typeof useCall;

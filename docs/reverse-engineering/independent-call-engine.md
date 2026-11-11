@@ -27,7 +27,7 @@ relay-first route but do not establish live interoperability.
 | --- | --- | --- |
 | Incoming offer/codec schema | `src/call/negotiation.ts` | Native parseRequest 0x10001c824, codec parser 0x100159598; synthetic fixtures |
 | Accepted 402 body builder | `src/call/negotiation.ts` | Uses explicit negotiated codecs, selected relay addresses and generated capabilities; fixture tested, not sent |
-| Manual answer trial | `examples/call-web-demo/independent-call.mjs`, `zalo-session.mjs`, `server.mjs` | Sends status0 only after user action and prepared browser audio; capability candidate is not peer-validated; RTP TX waits for matching answer_ack |
+| Manual answer trial | `examples/call-audio-starter/backend/independent-call.mjs`, `examples/call-audio-starter/backend/zalo-session.mjs`, `examples/call-audio-starter/server.mjs` | Sends status0 only after user action and prepared browser audio; capability candidate is not peer-validated; RTP TX waits for matching answer_ack |
 | Modern media/control/P2P envelopes | `src/call/zrtpPacket.ts` | Builder 0x10015830c, parser 0x1001589e8; exact little-endian header fixtures, malformed/bounds/ownership tests |
 | Relay callee/caller registration | `src/call/relayRegistration.ts` | Init path 0x10017b738; exact request fixture, successful/error response fixtures, real UDP localhost exchange |
 | SRTP profile/key selection | `src/call/srtpParameters.ts` | Explicit key or first30 raw UTF8 bytes of session, mode equality; static reconstruction tested with synthetic values |
@@ -36,9 +36,9 @@ relay-first route but do not establish live interoperability.
 | Persistent relay registration | `src/call/relayRegistration.ts` | Connected UDP socket, bounded 1s registration retries, 6s keepalive, TX media envelopes and relay end; explicit UI action |
 | RTP parser and sender state | `src/call/rtpAudio.ts` | RTP v2 parser including CSRC/extensions/padding; per-call SSRC, sequence and timestamp counters |
 | RTCP report and parser | `src/call/rtcp.ts` | Compound SR/RR + SDES/CNAME builder and SR/RR report-block parser; unit tested |
-| SRTCP relay path | `examples/call-web-demo/independent-call.mjs` | Matched local/remote srtcp gates separate send/receive contexts; protect before type5 wrap, unwrap before authenticate/parse; offline relay round-trip tested, no remote interoperability proof |
-| Independent Opus codec and browser bridge | `examples/call-web-demo/opus-gateway.mjs`, `media.mjs`, `independent-call.mjs` | WASM libopus; WebRTC `RTCAudioSink` mic PCM to relay, authenticated receive decode to `RTCAudioSource`; TX stays gated until confirmation |
-| Independent offer observer | `examples/call-web-demo/independent-call.mjs` | Session/key data remain in memory, sanitized diagnostics, no auto-answer or import-time networking |
+| SRTCP relay path | `examples/call-audio-starter/backend/independent-call.mjs` | Matched local/remote srtcp gates separate send/receive contexts; protect before type5 wrap, unwrap before authenticate/parse; offline relay round-trip tested, no remote interoperability proof |
+| Independent Opus codec and browser bridge | `examples/call-audio-starter/backend/opus-gateway.mjs`, `examples/call-audio-starter/backend/media.mjs`, `examples/call-audio-starter/backend/independent-call.mjs` | WASM libopus; WebRTC `RTCAudioSink` mic PCM to relay, authenticated receive decode to `RTCAudioSource`; TX stays gated until confirmation |
+| Independent offer observer | `examples/call-audio-starter/backend/independent-call.mjs` | Session/key data remain in memory, sanitized diagnostics, no auto-answer or import-time networking |
 
 `src/index.ts` exposes these primitives under `experimentalCallProtocol`.
 No external proprietary code or binary is loaded by them. SRTP is a new,
@@ -89,11 +89,11 @@ fall back to plaintext when negotiation is unknown.
 ```sh
 npm run build:esm
 bun test ./test/zrtpPacket.ts ./test/zrtcNegotiation.ts ./test/zrtcRelay.ts ./test/srtpRtp.ts ./test/voiceCall.ts
-cd examples/call-web-demo
+cd examples/call-audio-starter
 npm run build
 npm test
-node test/browser-controls.mjs
-node test/browser.mjs
+npm run test:media
+npm run test:protocol
 ```
 
 Demo unit/WebRTC suite: 16 tests passed after the manual answer-trial path.

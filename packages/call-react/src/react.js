@@ -2,17 +2,18 @@ import { useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import { ZaloCallClient } from "./client.js";
 
 /**
- * React hook for the Zalo call gateway.
+ * React hook for an application-provided call transport. The application owns
+ * authentication and server-side account credentials; none are accepted here.
  *
  * ```jsx
  * const { state, call, answer, hangup, setMuted } = useZaloCall();
  * <button onClick={() => call(friendId)}>Call</button>
  * ```
  *
- * The hook connects the gateway automatically, prepares the microphone and
- * routes the remote audio to the speakers; no extra media wiring is required.
+ * Supply a stable `transport` option. The hook opens browser media on demand;
+ * authentication and signaling are owned by the application adapter/backend.
  */
-export function useZaloCall(options = {}) {
+export function useCall(options = {}) {
     const optionsRef = useRef(options);
     const clientRef = useRef(null);
     if (!clientRef.current) clientRef.current = new ZaloCallClient(optionsRef.current);
@@ -28,9 +29,9 @@ export function useZaloCall(options = {}) {
         () => ({
             client,
             connect: () => client.connect(),
-            call: (calleeId, callOptions) => client.call(calleeId, callOptions),
+            call: (peerId, callOptions) => client.call(peerId, callOptions),
             /** Audio call shortcut: microphone + speakers are set up for you. */
-            callAudio: (calleeId) => client.call(calleeId, { callType: 1 }),
+            callAudio: (peerId) => client.call(peerId, { callType: 1 }),
             answer: () => client.answer(),
             hangup: () => client.hangup(),
             setMicrophoneMuted: (muted) => client.setMicrophoneMuted(muted),
@@ -45,10 +46,10 @@ export function useZaloCall(options = {}) {
         state,
         ...actions,
         connected: state.gateway === "connected",
-        online: state.zalo === "online",
+        online: state.gateway === "connected",
         inCall: ["preparing", "relay-ready", "inviting", "calling", "ringing", "connecting", "connected", "answering"].includes(state.call),
     };
 }
 
-/** Alias kept for applications that prefer the shorter name. */
-export const useCall = useZaloCall;
+/** Backward-compatible alias. */
+export const useZaloCall = useCall;

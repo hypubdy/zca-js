@@ -1,0 +1,24 @@
+{
+  "name": "zca-call-audio-starter",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "start": "node server.mjs",
+    "test": "node --test test/*.test.mjs",
+    "test:media": "node --test test/media.test.mjs",
+    "test:protocol": "bun test test/*.test.ts"
+  },
+  "dependencies": {
+    "@zca-js/call-react": "file:../../packages/call-react",
+    "@roamhq/wrtc": "^0.10.0",
+    "opusscript": "^0.1.1",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
+  }
+}

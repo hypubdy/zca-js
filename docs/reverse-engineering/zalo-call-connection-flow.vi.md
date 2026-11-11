@@ -252,10 +252,11 @@ await api.voiceCall.end(peerId, String(callId));
 - `src/apis/listen.ts`: giải mã cmd 601, phát event `call`.
 - `src/models/CallEvent.ts`: kiểu event và batch summary.
 - `src/apis/voiceCall.ts`: signaling methods, endpoint và payload.
-- `examples/call-web-demo/zalo-session.mjs`: login, listener, answer/end wrapper.
-- `examples/call-web-demo/independent-call.mjs`: parse offer, trạng thái pending/confirmed, relay và cleanup.
-- `examples/call-web-demo/server.mjs`: RPC `call-accept`, `call-end`, `media-offer`, `media-stop`.
-- `examples/call-web-demo/web/main.jsx`: UI nhận event, chuẩn bị browser media, answer và hangup.
+- `examples/call-audio-starter/backend/zalo-session.mjs`: login, listener và signaling wrappers.
+- `examples/call-audio-starter/backend/independent-call.mjs`: parse offer, trạng thái pending/confirmed, RTP/SRTP relay và cleanup.
+- `examples/call-audio-starter/backend/media.mjs`: WebRTC PCM bridge.
+- `examples/call-audio-starter/server.mjs` và `src/call-backend.mjs`: HTTP command API, event WebSocket và điều phối call/media.
+- `examples/call-audio-starter/web/app.jsx`: UI audio call; browser audio đi qua package `@zca-js/call-react`.
 - [Nhật ký dịch ngược phiên hôm nay](zalo-call-re-session-2026-10-21.vi.md)
 - [Hợp đồng video ZRTC](zrtc-video-contract.md)
 

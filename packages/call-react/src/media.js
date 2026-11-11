@@ -87,7 +87,7 @@ export class CallMediaSession {
             };
             await pc.setLocalDescription(await pc.createOffer({ offerToReceiveAudio: true }));
             await waitForIce(pc, iceTimeoutMs);
-            const answer = await rpc("media-offer", {
+            const answer = await rpc("media.negotiate", {
                 mode: "zalo",
                 input: "mic",
                 offer: pc.localDescription.toJSON ? pc.localDescription.toJSON() : pc.localDescription,

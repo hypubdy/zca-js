@@ -1,28 +1,19 @@
 // rollup.config.js
+import { isAbsolute } from "node:path";
 
 export default {
-    input: "dist/index.js",
+    input: {
+        index: "dist/index.js",
+        "call/voice": "dist/call/voice.js",
+        "call/webrtc": "dist/call/webrtc.js",
+    },
     output: {
         dir: "dist/cjs",
         entryFileNames: "[name].cjs",
         format: "cjs",
         preserveModules: true,
+        preserveModulesRoot: "dist",
     },
-    external: [
-        "crypto-js",
-        "events",
-        "form-data",
-        "fs",
-        "node:crypto",
-        "node:fs",
-        "node:fs/promises",
-        "node:path",
-        "pako",
-        "semver",
-        "sharp",
-        "spark-md5",
-        "tough-cookie",
-        "ws",
-        "json-bigint"
-    ],
+    // Every bare import (dependencies, optional peers, node builtins) stays external.
+    external: (id) => !id.startsWith(".") && !isAbsolute(id),
 };

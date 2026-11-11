@@ -2,7 +2,7 @@ import { ZaloCallClient } from "./client.js";
 
 export { ZaloCallClient } from "./client.js";
 export { CallStore, restoreIncoming } from "./store.js";
-export { GatewayTransport } from "./transport.js";
+export { CallTransport, GatewayTransport, assertCallTransport } from "./transport.js";
 export { CallMediaSession } from "./media.js";
 export { createVideoCapture, createVideoDecoder, stopVideoCapture } from "./video.js";
 export { initialState, defaultOptions, TERMINAL_ACTIONS } from "./constants.js";
@@ -17,9 +17,9 @@ export function createZaloCallClient(options) {
  * Minimal façade for application code.
  *
  * ```js
- * const call = createZaloCall();
- * await call.call(friendId);        // gateway session must already be online
- *                                  // microphone + speaker are opened for you
+ * const call = createZaloCall({ transport }); // app-provided request/event adapter
+ * await call.call(peerId);                    // app backend handles signaling
+ *                                             // browser media is opened on demand
  * call.onState((state) => render(state));
  * await call.hangup();
  * ```
@@ -30,8 +30,8 @@ export function createZaloCall(options = {}) {
         client,
         connect: () => client.connect(),
         /** Place an outgoing call; audio is connected automatically. */
-        call: (calleeId, callOptions) => client.call(calleeId, callOptions),
-        callAudio: (calleeId) => client.call(calleeId, { callType: 1 }),
+        call: (peerId, callOptions) => client.call(peerId, callOptions),
+        callAudio: (peerId) => client.call(peerId, { callType: 1 }),
         answer: () => client.answer(),
         hangup: () => client.hangup(),
         setMuted: (muted) => client.setMicrophoneMuted(muted),

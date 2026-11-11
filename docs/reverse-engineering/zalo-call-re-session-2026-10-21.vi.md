@@ -57,7 +57,7 @@ Các kiểm tra đã chạy trong phiên:
 - `bun run build`: thành công; Rollup báo external `node:dgram`/`node:net` như cấu hình hiện tại.
 - `bun test ./test/rtpVp8.ts ./test/zrtcRelayMedia.ts`: 10 test pass, 37 assertions.
 - `node --expose-gc --test test/independent-call.test.mjs test/call-notification.test.mjs`: 18 test pass.
-- `npm run build` trong `examples/call-web-demo`: thành công.
+- `npm run build` trong `examples/call-audio-starter`: thành công sau khi gom backend/media vào dự án starter.
 - `git diff --check`: thành công.
 
 Không tính `bun test ... ./test/zrtcRelay.ts` là pass: fixture UDP bị sandbox chặn với `bind EPERM 127.0.0.1`. Một lượt `npm test` rộng hơn có 24 pass và một lỗi WebRTC loopback ICE vẫn ở trạng thái `new` sau 11 giây; chưa xác định đó là lỗi code hay giới hạn môi trường. Vì vậy các kết quả này không được dùng làm bằng chứng cho kết nối media Zalo thật.
@@ -84,7 +84,7 @@ Do đó, thay đổi phân loại giải quyết một lỗi logic có căn cứ
 - [Hợp đồng capabilities](zrtc-capabilities-contract.md)
 - [Bridge RTP video](../../src/call/videoRtpBridge.ts)
 - [Parser/negotiation cuộc gọi](../../src/call/negotiation.ts)
-- [Demo độc lập](../../examples/call-web-demo/)
+- [Dự án audio call duy nhất](../../examples/call-audio-starter/)
 - [Handoff tích lũy của luồng call](../../CALL_STREAM_HANDOFF.md)
 
 ## Kết luận phiên

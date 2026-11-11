@@ -1,142 +1,92 @@
 # `@zca-js/call-react`
 
-Browser client and React hook for the ZCA call gateway. The package owns the
-WebSocket RPC/state machine, microphone capture, WebRTC negotiation and speaker
-playback (and, experimentally, camera/WebCodecs video). Zalo credentials, relay
-tokens and SRTP keys stay inside the Node gateway — never in the browser.
+Credential-free browser call client and React hook. The library manages call UI state, browser microphone/WebRTC media, and delegates all signaling to an application-provided `CallTransport`. It does not implement account login and must never receive Zalo credentials, cookies, QR-login secrets, relay secrets, or SRTP keys.
 
-With one call the application gets a working audio call:
+## Architecture
 
-```js
-await call.call(friendId); // mic + WebRTC + playback are prepared automatically
+```text
+React UI → CallClient / useCall → CallTransport (provided by your app)
+                                     ↕ request + events
+                             your application backend
+                                     ↕
+                        account / Zalo / signaling / relay
 ```
 
-## Install
+The app owns authentication and constructs a transport that authenticates to its own backend using the app's normal session. Keep Zalo credentials and account sessions server-side. The optional `GatewayTransport` is a compatibility adapter for this repository's demo gateway; it is not required by the generic transport API.
 
-```sh
-npm install /absolute/path/to/zca-js/packages/call-react
-# or, inside this repo:
-npm install ../../packages/call-react
-```
-
-React is a peer dependency (`>=18`) and is not bundled.
-
-A Node gateway must be running (`examples/call-web-demo`: `npm start`, default
-`http://127.0.0.1:4317`). The React app should proxy `/ws` and `/api` to it so
-the browser sees a same-origin service. For Vite:
-
-```js
-// vite.config.js
-export default {
-    server: {
-        proxy: {
-            "/ws": { target: "ws://127.0.0.1:4317", ws: true, changeOrigin: true, rewriteWsOrigin: true },
-            "/api": { target: "http://127.0.0.1:4317", changeOrigin: true },
-        },
-    },
-};
-```
-
-In production, serve the app and gateway behind the same HTTPS origin. If the
-reverse proxy keeps the public WebSocket `Origin`, start the gateway with
-`CALL_ALLOWED_ORIGINS=https://calls.example.com` (comma-separated exact origins).
-
-## React quick start
-
-```jsx
-import { useZaloCall } from "@zca-js/call-react/react";
-
-export function CallButton({ friendId }) {
-    const { connected, online, state, call, answer, hangup } = useZaloCall();
-
-    if (state.call === "incoming") return <button onClick={answer}>Nghe</button>;
-    if (state.call !== "idle") return <button onClick={hangup}>Kết thúc</button>;
-    return (
-        <button disabled={!connected || !online} onClick={() => call(friendId)}>
-            Gọi
-        </button>
-    );
-}
-```
-
-A copy-pasteable widget lives in [`examples/minimal.jsx`](examples/minimal.jsx).
-
-That is the entire integration: the hook connects the gateway, requests the
-microphone only when needed, negotiates WebRTC, sends the invite and routes the
-remote audio to the speakers. No `<audio>` element, no manual RPC sequencing.
-
-The `state.zalo` field reflects the server-owned Zalo session. In production,
-authenticate the `ZaloSession` on the Node gateway; do not send credentials or
-cookies through this browser library. Incoming calls set
-`state.call === "incoming"`; `answer()` accepts.
-
-## Framework-independent usage
+## Minimal custom transport
 
 ```js
 import { createZaloCall } from "@zca-js/call-react";
 
-const call = createZaloCall();          // same-origin /ws by default
-call.onState((state) => render(state));
+const handlers = new Set();
+const transport = {
+  async request(action, payload) {
+    // Send to YOUR backend, using your app's existing auth mechanism.
+    const response = await fetch("/api/calls", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action, payload }),
+    });
+    if (!response.ok) throw new Error("Call request failed");
+    return response.json();
+  },
+  subscribe(handler) {
+    handlers.add(handler);
+    // Connect your authenticated event channel here, and call handlers with
+    // normalized events, e.g. { type: "call-incoming", callId, peerId }.
+    return () => handlers.delete(handler);
+  },
+};
 
-// The Node gateway must already have an authenticated Zalo session.
-await call.call(friendId);              // audio call, speakers connected
+const call = createZaloCall({ transport });
+call.onState((state) => renderCallState(state));
+await call.call("peer-id");
 await call.hangup();
 ```
 
-`createZaloCall` connects on demand, so `call()` / `answer()` never need an
-explicit `connect()`. Zalo authentication and session ownership belong to the
-Node gateway, not this browser package. This call client intentionally has no
-`login()` method.
+`CallTransport` contract:
 
-The local demo has a separate account-linking UI in
-`examples/call-web-demo/web/session-controls.js`; it sends an admin command to
-the Node gateway to start its QR flow. That helper is deliberately not exported
-from this package. Production apps should authenticate/manage the Zalo session
-through their server and expose only the needed online state (and, if needed, a
-short-lived QR image) to the frontend.
-
-## API
-
-`useZaloCall(options?)` returns:
-
-| Field | Meaning |
-| --- | --- |
-| `state` | `{ gateway, zalo, call, direction, media, incoming, independent, qr, error, … }` |
-| `call(id, { callType })` | Outgoing call (`1` audio, `3` video). Auto-connects and opens media. |
-| `callAudio(id)` | Shortcut for `call(id, { callType: 1 })`. |
-| `answer()` / `hangup()` | Accept the incoming call / end the active call. |
-| `setMuted(bool)` / `setMicrophoneMuted(bool)` | Local microphone mute. |
-| `setPlaybackMuted(bool)` / `setVolume(0..1)` | Speaker control. |
-| `connected`, `online`, `inCall` | Convenience booleans derived from `state`. |
-| `client` | Escape hatch to `ZaloCallClient` (events, diagnostics, video). |
-
-`ZaloCallClient` and `createZaloCallClient` are exported for non-React code.
-`onEvent(listener)` exposes sanitized gateway events for diagnostics.
-
-## Source layout
-
-```
-src/
-  constants.js   initial state, defaults, terminal actions
-  urls.js        gateway/config URL resolution
-  store.js       observable state + event channel
-  transport.js   WebSocket, RPC correlation, reconnection
-  media.js       microphone, WebRTC, GainNode playback, mute/volume
-  video.js       camera capture (WebCodecs H.264) + remote decoding
-  client.js      orchestration and the call state machine
-  index.js       public exports + createZaloCall façade
-react.js         useZaloCall / useCall hooks
+```ts
+interface CallTransport {
+  request(action: string, payload?: Record<string, unknown>): Promise<unknown>;
+  subscribe(handler: (event: { type: string; [key: string]: unknown }) => void): () => void;
+}
 ```
 
-The implementation details of the gateway protocol (relay registration, SRTP,
-codec negotiation) stay in the server and in `src/call/` of the repository; this
-package only speaks the browser-safe RPC surface.
+The app adapter receives neutral actions (`call.prepare`, `call.start`, `call.prepare-media`, `call.accept`, `call.end`, and `media.negotiate`) and maps them to its own backend protocol. It maps backend events into normalized events such as `call-incoming`, `call-state`, `media-state`, and `call-error`. This mapping is application-owned; no Zalo-specific ID or credential format is required by the library contract.
 
-## Notes and limits
+## React
 
-- Microphone/camera APIs require a secure context (`https://` or `localhost`).
-- Audio is played through a Web Audio `GainNode`; browsers may require a user
-  gesture before the `AudioContext` starts, which the call button provides.
-- Video is experimental: the gateway negotiates and relays H.264, but Zalo
-  interoperability for the outgoing direction is still being verified.
-- The package never stores credentials, QR images or media tokens.
+```jsx
+import { useCall } from "@zca-js/call-react/react";
+
+function CallButton({ transport, peerId }) {
+  const { state, call, answer, hangup } = useCall({ transport });
+  if (state.call === "incoming") return <button onClick={answer}>Answer</button>;
+  if (state.call !== "idle") return <button onClick={hangup}>Hang up</button>;
+  return <button onClick={() => call(peerId)}>Call</button>;
+}
+```
+
+Create a stable transport instance outside render (or memoize it), since the hook owns a client for the component lifetime. The hook does not log in, acquire account credentials, or expose a QR-login operation.
+
+## Compatibility gateway transport
+
+For the repository demo only, omitting `transport` uses the legacy WebSocket gateway (`gatewayUrl`, default same-origin `/ws`). Its demo server owns Zalo login/session. New integrations should pass their own `transport`. React apps should not send credentials to this package or store them in local storage.
+
+The built-in WebRTC media negotiation expects the demo gateway's ICE configuration and SDP bridge semantics. A custom backend must implement the neutral media actions or provide a compatible media adapter/backend contract; transport injection alone does not make arbitrary call servers media-compatible. Video remains experimental.
+
+## Package layout
+
+- `src/transport.js`: generic transport contract and optional WebSocket RPC adapter.
+- `src/client.js`: call state, action orchestration, media lifecycle.
+- `src/media.js`: browser microphone, WebRTC and playback.
+- `src/react.js`: React hooks.
+- `src/video.js`: experimental video capture/decoding.
+
+## Security
+
+- Never pass Zalo credentials, cookies, QR secrets, relay credentials, or SRTP keys to the browser library.
+- Authenticate browser requests to your application backend using your app's session and authorize every peer/call action server-side.
+- Do not put secrets in event payloads, errors, diagnostic events, or logs.
