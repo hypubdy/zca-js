@@ -14,6 +14,11 @@ export interface AudioRelay {
     sendAudio(rtp: Uint8Array): void;
     sendAudioRtcp(rtcp: Uint8Array): void;
     close(sendEnd?: boolean): void;
+    /** Video relay methods (ZrtpRelaySession has them); required only for video calls. */
+    sendVideo?(rtp: Uint8Array): void;
+    sendVideoRtcp?(rtcp: Uint8Array): void;
+    sendLocalCameraState?(on: boolean, reason?: number): void;
+    sendVideoSuspend?(suspended: boolean, reason?: number): void;
 }
 
 export type AudioSessionCounters = {

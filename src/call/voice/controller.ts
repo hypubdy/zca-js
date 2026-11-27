@@ -50,6 +50,9 @@ export class CallController extends EventEmitter {
             ringTimeoutMs,
             connectTimeoutMs: options.connectTimeoutMs ?? 20_000,
             sendRinging: options.sendRinging ?? true,
+            videoPacketFormat: options.videoPacketFormat,
+            videoRequestEnable: options.videoRequestEnable !== false,
+            videoPacing: options.videoPacing !== false,
             onEnded: call => { if (this.current === call) this.current = null; },
         };
         options.listener.on("call", this.onCall);
@@ -59,11 +62,12 @@ export class CallController extends EventEmitter {
 
     active(): VoiceCall | null { return this.current; }
 
-    async dial(peerId: string): Promise<VoiceCall> {
+    /** Start an outgoing call. `{ video: true }` places a 1-to-1 video call (H.264). */
+    async dial(peerId: string, options: { video?: boolean } = {}): Promise<VoiceCall> {
         if (this.destroyed) throw new CallError("invalid-state", "Controller is destroyed");
         if (typeof peerId !== "string" || !/^\d{1,32}$/.test(peerId)) throw new CallError("invalid-peer", "peerId must be a numeric Zalo UID");
         if (this.current) throw new CallError("busy", "Another call is already active");
-        const call = new VoiceCall(this.runtime, { direction: "outgoing", peerId, callId: String(randomInt(1, 0x7fffffff)) });
+        const call = new VoiceCall(this.runtime, { direction: "outgoing", peerId, callId: String(randomInt(1, 0x7fffffff)), video: options?.video === true });
         this.current = call;
         try {
             await call.startOutgoing();
@@ -118,7 +122,7 @@ export class CallController extends EventEmitter {
         }
         const callId = String(offer.callId);
         if (this.current?.id === callId) return;
-        if (offer.videoRequested === true) { this.ignore("video", control, callId, offer.uidN); return; }
+        if (offer.videoRequested === true && this.options.video !== true) { this.ignore("video", control, callId, offer.uidN); return; }
         if (this.current) {
             // Leave the call to the user's other devices; do not answer or reject.
             this.log("info", "incoming call while busy ignored", { callId, peerId: offer.uidN });
@@ -127,7 +131,7 @@ export class CallController extends EventEmitter {
         const call = new VoiceCall(this.runtime, { direction: "incoming", offer });
         this.current = call;
         call.startIncoming();
-        this.log("info", "incoming voice call", { callId, peerId: call.peerId });
+        this.log("info", call.video ? "incoming video call" : "incoming voice call", { callId, peerId: call.peerId });
         this.emitSafely("incoming", call);
     }
 

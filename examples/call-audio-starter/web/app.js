@@ -1,7 +1,10 @@
 /* global document, location, RTCPeerConnection, MediaStream, Option */
-// Browser side: mic/speaker over WebRTC to the backend's zca-js/call-webrtc bridge.
+// Browser side: mic/speaker over WebRTC to the backend's zca-js/call-webrtc bridge,
+// plus (video calls) WebCodecs H.264 over WS /video, see video.js.
+import { startVideo, videoSupported } from "./video.js";
+
 const $ = id => document.getElementById(id);
-const state = { zalo: "offline", call: null, pc: null, stream: null };
+const state = { zalo: "offline", call: null, pc: null, stream: null, video: null, videoTimer: null };
 
 function log(line) {
     const el = $("log");
@@ -40,6 +43,24 @@ async function connectMedia() {
 function closeMedia() {
     state.pc?.close(); state.pc = null;
     state.stream?.getTracks().forEach(track => track.stop()); state.stream = null;
+    void stopVideoMedia();
+}
+
+async function startVideoMedia() {
+    if (state.video) return;
+    state.video = await startVideo({ localVideo: $("local-video"), canvas: $("remote-video"), log });
+    $("videos").hidden = false;
+    $("camera").checked = true;
+    state.videoTimer = setInterval(() => {
+        const v = state.video?.stats();
+        if (v) $("video-stats").textContent = `video trình duyệt: encode ${v.encoded} · gửi ${v.sent} · nhận ${v.received} · hiện ${v.decoded} · lỗi decode ${v.decodeErrors}`;
+    }, 1000);
+}
+async function stopVideoMedia() {
+    clearInterval(state.videoTimer); state.videoTimer = null;
+    const video = state.video; state.video = null;
+    $("videos").hidden = true;
+    await video?.stop();
 }
 
 function render() {
@@ -50,6 +71,11 @@ function render() {
     $("status").textContent = `Zalo: ${state.zalo} · Cuộc gọi: ${active ? `${call.direction} ${call.state}` : "không có"}`;
     $("incoming").hidden = !(active && call.state === "incoming");
     $("incoming-peer").textContent = call?.peerId ?? "";
+    $("incoming-kind").textContent = call?.video ? "Cuộc gọi video đến" : "Cuộc gọi đến";
+    $("btn-answer-video").hidden = !call?.video;
+    $("btn-answer-video").disabled = !videoSupported();
+    $("btn-dial-video").disabled = Boolean(active) || !videoSupported();
+    $("camera-wrap").hidden = !(active && call.video);
     $("btn-hangup").disabled = !active;
     $("btn-dial").disabled = Boolean(active);
 }
@@ -65,7 +91,15 @@ function onEvent({ event, data }) {
         case "call-state": state.call = data; log(`call ${data.state}`); break;
         case "call-ended": log(`ended: ${data.reason} (${Math.round(data.durationMs / 1000)}s) ${JSON.stringify(data.diagnostics)}`);
             state.call = { ...(state.call || {}), state: "ended" }; closeMedia(); break;
-        case "call-stats": $("stats").textContent = `gửi ${data.packetsSent} · nhận ${data.packetsReceived} · mất ${data.packetsLost} · mic RMS ${data.inputRms.toFixed(4)} · loa RMS ${data.outputRms.toFixed(4)}${data.remoteMuted ? " · peer đang tắt mic" : ""}`; break;
+        case "call-stats": {
+            const v = data.video;
+            const videoLine = data.diagnostics?.video
+                ? ` · video gửi ${v.framesSent} (${v.keyFramesSent} key) · nhận ${v.framesReceived} (${v.keyFramesReceived} key) · AU thiếu ${v.incompleteFrames}${data.diagnostics.videoNegotiated ? "" : " · peer KHÔNG nhận video"}${v.remoteCameraOff ? " · peer tắt camera" : ""}`
+                : "";
+            $("stats").textContent = `gửi ${data.packetsSent} · nhận ${data.packetsReceived} · mất ${data.packetsLost} · mic RMS ${data.inputRms.toFixed(4)} · loa RMS ${data.outputRms.toFixed(4)}${data.remoteMuted ? " · peer đang tắt mic" : ""}${videoLine}`;
+            break;
+        }
+        case "call-remote-camera": log(`peer camera ${data.on ? "on" : "off"}`); break;
         case "call-remote-mute": log(`peer ${data.muted ? "muted" : "unmuted"}`); break;
         case "call-error": log(`call error ${data.code}: ${data.message}`); break;
         case "bridge-state": log(`bridge: ${data.state}`); break;
@@ -85,14 +119,33 @@ function connectEvents() {
 }
 
 $("btn-login").onclick = () => run(() => api("zalo.login"));
-$("btn-dial").onclick = () => run(async () => {
+async function dial(video) {
     const peerId = $("friends").value;
     if (!peerId) throw new Error("Chọn một người bạn");
     await connectMedia();
-    state.call = await api("call.dial", { peerId });
+    try {
+        if (video) await startVideoMedia();
+        state.call = await api("call.dial", { peerId, video });
+    } catch (error) {
+        closeMedia(); // no call-ended will arrive for a failed dial: release mic/camera now
+        throw error;
+    }
     render();
+}
+$("btn-dial").onclick = () => run(() => dial(false));
+$("btn-dial-video").onclick = () => run(() => dial(true));
+if (!videoSupported()) {
+    const why = "Trình duyệt này không có WebCodecs/MediaStreamTrackProcessor — mở bằng Chrome hoặc Edge để gọi video";
+    $("btn-dial-video").title = why; $("btn-answer-video").title = why;
+    log(why);
+}
+// Answering a video call by voice only: the backend reports our camera as off (/conf isOnCam 0) and sends no frames.
+$("btn-answer").onclick = () => run(async () => { await connectMedia(); await api("call.answer", { camera: false }); });
+$("btn-answer-video").onclick = () => run(async () => { await connectMedia(); await startVideoMedia(); await api("call.answer"); });
+$("camera").onchange = event => run(async () => {
+    state.video?.setCamera(event.target.checked);
+    await api("call.camera", { enabled: event.target.checked });
 });
-$("btn-answer").onclick = () => run(async () => { await connectMedia(); await api("call.answer"); });
 $("btn-reject").onclick = () => run(() => api("call.reject"));
 $("btn-hangup").onclick = () => run(async () => { await api("call.hangup"); closeMedia(); });
 $("mute").onchange = event => run(() => api("call.mute", { muted: event.target.checked }));

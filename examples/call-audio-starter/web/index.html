@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Audio Call Starter</title>
+    <title>Zalo Call Starter</title>
     <style>
       body { margin: 0; font: 16px system-ui, sans-serif; background: #f4f7fb; color: #17243a; }
       main { max-width: 680px; margin: 32px auto; padding: 24px; background: white; border: 1px solid #dce5ef; border-radius: 16px; }
@@ -18,12 +18,16 @@
       .incoming { border: 1px solid #f0c881; background: #fff8e9; padding: 14px; border-radius: 10px; }
       .error { color: #b42332; }
       pre { font-size: 12px; background: #0f1724; color: #cfe3ff; padding: 10px; border-radius: 8px; max-height: 220px; overflow: auto; }
+      .videos { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 12px 0; }
+      .videos video, .videos canvas { width: 100%; background: #0f1724; border-radius: 10px; aspect-ratio: 4 / 3; object-fit: contain; }
+      .videos span { font-size: 13px; color: #55657d; }
+      @media (max-width: 560px) { .videos { grid-template-columns: 1fr; } }
       [hidden] { display: none !important; }
     </style>
   </head>
   <body>
     <main>
-      <h1>Gọi thoại Zalo</h1>
+      <h1>Gọi thoại / video Zalo</h1>
       <div class="status" id="status">Đang kết nối backend…</div>
       <section id="login">
         <div class="row"><button id="btn-login">Liên kết Zalo (QR)</button></div>
@@ -33,16 +37,23 @@
         <div class="row">
           <select id="friends"><option value="">— chọn bạn —</option></select>
           <button id="btn-dial">Gọi thoại</button>
+          <button id="btn-dial-video">Gọi video</button>
         </div>
         <div class="incoming" id="incoming" hidden>
-          <strong>Cuộc gọi đến</strong> từ <span id="incoming-peer"></span>
-          <div class="row"><button id="btn-answer">Nghe (mic trình duyệt)</button><button class="danger" id="btn-reject">Từ chối</button></div>
+          <strong id="incoming-kind">Cuộc gọi đến</strong> từ <span id="incoming-peer"></span>
+          <div class="row"><button id="btn-answer-video" hidden>Nghe video</button><button id="btn-answer">Nghe (mic trình duyệt)</button><button class="danger" id="btn-reject">Từ chối</button></div>
         </div>
         <div class="row">
           <button class="danger" id="btn-hangup" disabled>Kết thúc</button>
           <label><input type="checkbox" id="mute" /> Tắt mic</label>
+          <label id="camera-wrap" hidden><input type="checkbox" id="camera" checked /> Camera</label>
+        </div>
+        <div class="videos" id="videos" hidden>
+          <div><span>Bạn</span><video id="local-video" autoplay muted playsinline></video></div>
+          <div><span>Người kia</span><canvas id="remote-video" width="640" height="480"></canvas></div>
         </div>
         <div id="stats"></div>
+        <div id="video-stats"></div>
       </section>
       <p class="error" id="error"></p>
       <audio id="remote" autoplay></audio>

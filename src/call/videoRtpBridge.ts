@@ -13,6 +13,12 @@ function hasH264KeyFrame(data: Uint8Array): boolean {
     return false;
 }
 
+/** Pacing: packets per burst and the gap between bursts (≈30-packet IDR over ~20 ms). */
+const PACE_BURST = 4;
+const PACE_INTERVAL_MS = 3;
+/** ~1 s of video at 700 kbps; beyond this the queue is stale. */
+const PACE_MAX_BACKLOG = 600;
+
 export type VideoRelaySender = { sendVideo(packet: Uint8Array): void };
 export type VideoRtpBridgeOptions = {
     relay: VideoRelaySender;
@@ -36,6 +42,12 @@ export type VideoRtpBridgeOptions = {
      * packetMode-1 raw splitter. "rfc6184" strips start codes.
      */
     packetFormat?: "nal" | "balanced" | "rfc6184";
+    /**
+     * Spread large access units over time instead of bursting every packet at
+     * once. The relay/peer drop bursts and Zalo sends no NACK/PLI back, so a
+     * lost keyframe packet freezes the picture until the next IDR. Default false.
+     */
+    pacing?: boolean;
     /**
      * Emit the native RapidSync/SVC RTP header extension. Off by default: the
      * live Zalo peer sent no extensions, and a receiver that does not honour
@@ -79,6 +91,13 @@ export class VideoRtpBridge {
     private nextSequence: number;
     /** Random 32-bit RTP timestamp base, mirroring native WebRTC's random offset. */
     private timestampOffset?: number;
+    private readonly pacing: boolean;
+    private paceQueue: Uint8Array[] = [];
+    private paceTimer?: ReturnType<typeof setTimeout>;
+    private paceCredit = PACE_BURST;
+    private paceRefillAt = 0;
+    /** Packets dropped because the pacing backlog overflowed. */
+    pacingDropped = 0;
     private readonly relay: VideoRelaySender;
     private readonly localSsrc: number;
     private readonly receptionStats = new RtpReceptionStats(90000);
@@ -117,6 +136,10 @@ export class VideoRtpBridge {
     readonly sentH264NalTypes: Record<string, number> = {};
     readonly sentH264NalSamples: Record<string, string> = {};
     readonly receivedH264NalTypes: Record<string, number> = {};
+    /** First authenticated packets as "pt/marker/len/hex8" (clear payload, bounded) for format RE. */
+    readonly receivedSamples: string[] = [];
+    /** First sent packets in the same shape, so a trace can compare both directions. */
+    readonly sentSamples: string[] = [];
     readonly receivedH264NalSamples: Record<string, string> = {};
     lastRejection?: { message: string; payloadType?: number; nalType?: number };
 
@@ -128,6 +151,7 @@ export class VideoRtpBridge {
         this.relay = options.relay;
         this.localSsrc = options.localSsrc;
         this.payloadType = options.payloadType;
+        this.pacing = options.pacing === true;
         const receiveTypes = options.receivePayloadTypes ?? [options.payloadType];
         if (!receiveTypes.length || receiveTypes.length > 8 || receiveTypes.some(value => !Number.isInteger(value) || value < 0 || value > 127))
             throw new RangeError("Invalid receive video payload aliases");
@@ -145,7 +169,7 @@ export class VideoRtpBridge {
         this.configuredMaxPacketSize = options.maxPacketSize;
         this.emitExtensions = options.extensions === true && this.rawH264PacketMode;
         if ((options.codec ?? "vp8") === "h264") {
-            this.packetFormat = options.packetFormat ?? (options.packetMode === 1 ? "balanced" : "nal");
+            this.packetFormat = options.packetFormat ?? (options.packetMode === 1 || options.packetMode === 2 ? "balanced" : "nal");
             this.packetizer = this.createH264Packetizer(this.packetFormat, options.initialSequenceNumber);
             this.depacketizer = new H264RtpDepacketizer();
             this.vp8Fallback = new Vp8RtpDepacketizer();
@@ -243,9 +267,19 @@ export class VideoRtpBridge {
             }
         }
         const packets = this.packetizer.packetize(frame, timestamp90k);
+        // ZaloCall RTPReceiverVideo::ParseRtpPacket (26.11.10, 0x1003e8a64) sets
+        // the frame type from the payload type, not the bitstream: PT 97/122/125
+        // = delta, PT 98/121/126 = key. A keyframe on PT97 is never seen as key,
+        // so the peer waits forever (black). Send IDR access units on the paired
+        // key payload type, as native senders do (live trace: SPS/IDR on PT98).
+        const keyPayloadType = keyFrame && this.packetizer instanceof H264RtpPacketizer ? h264KeyPayloadType(this.payloadType) : undefined;
+        if (keyPayloadType !== undefined)
+            for (const packet of packets) packet[1] = (packet[1] & 0x80) | keyPayloadType;
         for (const packet of packets) {
-            this.sentOctets += parseRtpPacket(packet).payload.length;
-            this.relay.sendVideo(this.protect.protect(packet));
+            const parsed = parseRtpPacket(packet);
+            if (this.sentSamples.length < 24) this.sentSamples.push(packetSample(parsed));
+            this.sentOctets += parsed.payload.length;
+            this.enqueueVideo(this.protect.protect(packet));
         }
         this.sentPackets += packets.length;
         this.nextSequence = (this.nextSequence + packets.length) & 0xffff;
@@ -283,6 +317,7 @@ export class VideoRtpBridge {
             if (rtp.extension) this.observeHeaderExtension(rtp.extension.profile, rtp.extension.data);
             observedPayloadType = rtp.payloadType;
             observedNalType = rtp.payload[0] & 0x1f;
+            if (this.receivedSamples.length < 24) this.receivedSamples.push(packetSample(rtp));
             const firstKey = `${rtp.payloadType}:${rtp.payload[0]}`;
             this.observedPayloadFirstBytes[firstKey] = (this.observedPayloadFirstBytes[firstKey] || 0) + 1;
             if (!this.receivePayloadTypes.has(rtp.payloadType) || rtp.ssrc !== this.remoteSsrc)
@@ -445,42 +480,47 @@ export class VideoRtpBridge {
             this.resetRawH264();
             return null;
         }
-        const data = new Uint8Array(this.rawH264Total + 8);
-        let at = 0;
-        let fu: Uint8Array | undefined;
+        const chunks: Uint8Array[] = [];
         for (let index = 0; index < span; index++) {
             const sequence = (this.rawH264FirstSequence + index) & 0xffff;
             if (this.rawH264AuxSequences.has(sequence)) continue;
             const chunk = this.rawH264Packets.get(sequence);
             if (!chunk) { this.incompleteAccessUnits++; this.resetRawH264(); return null; }
-            const nalType = chunk[0] & 0x1f;
-            const startsWithStartCode = chunk.length >= 3 && chunk[0] === 0 && chunk[1] === 0 &&
-                (chunk[2] === 1 || (chunk.length >= 4 && chunk[2] === 0 && chunk[3] === 1));
-            if (!startsWithStartCode && (nalType === 28 || nalType === 29)) {
-                // FU-A/FU-B fragment of one NAL: rebuild it with a start code.
-                const headerOffset = nalType === 29 ? 4 : 2;
-                if (chunk.length <= headerOffset) { this.incompleteAccessUnits++; this.resetRawH264(); return null; }
-                const start = Boolean(chunk[1] & 0x80);
-                const end = Boolean(chunk[1] & 0x40);
-                if (start) {
-                    fu = new Uint8Array(4 + 1 + chunk.length - headerOffset);
-                    fu.set([0, 0, 0, 1, (chunk[0] & 0xe0) | (chunk[1] & 0x1f)], 0);
-                    fu.set(chunk.subarray(headerOffset), 5);
-                } else if (fu) {
-                    const merged = new Uint8Array(fu.length + chunk.length - headerOffset);
-                    merged.set(fu, 0);
-                    merged.set(chunk.subarray(headerOffset), fu.length);
-                    fu = merged;
-                } else {
-                    this.incompleteAccessUnits++; this.resetRawH264(); return null;
-                }
-                if (end) { data.set(fu, at); at += fu.length; fu = undefined; }
-                continue;
-            }
-            if (fu) { this.incompleteAccessUnits++; this.resetRawH264(); return null; }
-            data.set(chunk, at); at += chunk.length;
+            chunks.push(chunk);
         }
-        if (fu) { this.incompleteAccessUnits++; this.resetRawH264(); return null; }
+        // Native balanced chunks (packetMode 1/2) are raw AU bytes, so a
+        // continuation can start with any byte, including NAL type 28/29.
+        // Rebuild FU-A/FU-B only for a complete, consistent chain (S … E);
+        // anything else is kept raw, exactly as the native receiver does.
+        const fuInfo = (chunk: Uint8Array) => {
+            const type = chunk[0] & 0x1f;
+            const startCode = chunk.length >= 3 && chunk[0] === 0 && chunk[1] === 0 &&
+                (chunk[2] === 1 || (chunk.length >= 4 && chunk[2] === 0 && chunk[3] === 1));
+            if (startCode || (type !== 28 && type !== 29)) return null;
+            const headerOffset = type === 29 ? 4 : 2;
+            if (chunk.length <= headerOffset) return null;
+            return { type, headerOffset, start: Boolean(chunk[1] & 0x80), end: Boolean(chunk[1] & 0x40), nal: chunk[1] & 0x1f };
+        };
+        const data = new Uint8Array(this.rawH264Total + 5 * chunks.length);
+        let at = 0;
+        for (let i = 0; i < chunks.length; i++) {
+            const head = fuInfo(chunks[i]);
+            let chainEnd = -1;
+            if (head?.start && !head.end) {
+                for (let j = i + 1; j < chunks.length; j++) {
+                    const next = fuInfo(chunks[j]);
+                    if (!next || next.start || next.type !== head.type || next.nal !== head.nal) break;
+                    if (next.end) { chainEnd = j; break; }
+                }
+            }
+            if (chainEnd < 0) { data.set(chunks[i], at); at += chunks[i].length; continue; }
+            data.set([0, 0, 0, 1, (chunks[i][0] & 0xe0) | head!.nal], at); at += 5;
+            for (let j = i; j <= chainEnd; j++) {
+                const part = chunks[j].subarray(fuInfo(chunks[j])!.headerOffset);
+                data.set(part, at); at += part.length;
+            }
+            i = chainEnd;
+        }
         const frameData = data.subarray(0, at);
         const timestamp = this.rawH264Timestamp;
         this.resetRawH264();
@@ -492,9 +532,51 @@ export class VideoRtpBridge {
         this.rawH264Timestamp = undefined; this.rawH264PayloadType = undefined;
     }
 
+    private enqueueVideo(packet: Uint8Array) {
+        if (!this.pacing) { this.relay.sendVideo(packet); return; }
+        this.refillPaceCredit();
+        if (!this.paceQueue.length && this.paceCredit > 0) {
+            this.paceCredit--;
+            this.relay.sendVideo(packet);
+            return;
+        }
+        if (this.paceQueue.length >= PACE_MAX_BACKLOG) {
+            // Far behind real time: drop the backlog; the next IDR resyncs.
+            this.pacingDropped += this.paceQueue.length;
+            this.paceQueue = [];
+        }
+        this.paceQueue.push(packet);
+        if (!this.paceTimer) this.schedulePaced();
+    }
+
+    /** Token bucket: PACE_BURST packets per PACE_INTERVAL_MS. */
+    private refillPaceCredit() {
+        const now = performance.now();
+        if (now - this.paceRefillAt >= PACE_INTERVAL_MS) { this.paceCredit = PACE_BURST; this.paceRefillAt = now; }
+    }
+
+    private schedulePaced() {
+        this.paceTimer = setTimeout(this.drainPaced, PACE_INTERVAL_MS);
+        this.paceTimer.unref?.();
+    }
+
+    private drainPaced = () => {
+        this.paceTimer = undefined;
+        if (this.closed) { this.paceQueue = []; return; }
+        this.refillPaceCredit();
+        while (this.paceCredit > 0 && this.paceQueue.length) {
+            this.paceCredit--;
+            try { this.relay.sendVideo(this.paceQueue.shift()!); } catch { /* socket closing */ }
+        }
+        if (this.paceQueue.length) this.schedulePaced();
+    };
+
     close() {
         if (this.closed) return;
         this.closed = true;
+        if (this.paceTimer) clearTimeout(this.paceTimer);
+        this.paceTimer = undefined;
+        this.paceQueue = [];
         this.confirmed = false;
         this.depacketizer.reset();
         this.vp8Fallback?.reset(); this.vp8Timestamp = undefined;
@@ -502,4 +584,14 @@ export class VideoRtpBridge {
         this.protect.destroy();
         this.unprotect.destroy();
     }
+}
+
+function packetSample(rtp: { payloadType: number; marker?: boolean; payload: Uint8Array }): string {
+    const hex = Array.from(rtp.payload.subarray(0, 8), b => b.toString(16).padStart(2, "0")).join("");
+    return `${rtp.payloadType}/${rtp.marker ? 1 : 0}/${rtp.payload.length}/${hex}`;
+}
+
+/** ZaloCall pairs each H.264 delta payload type with a keyframe payload type. */
+export function h264KeyPayloadType(deltaPayloadType: number): number | undefined {
+    return ({ 97: 98, 122: 121, 125: 126 } as Record<number, number>)[deltaPayloadType];
 }
