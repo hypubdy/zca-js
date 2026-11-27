@@ -1,3 +1,44 @@
+# Video 1-1 chạy live: Zalo Desktop hiện hình, 30 fps — 2026-11-28
+
+Live: Zalo Desktop 26.11.10 (tài khoản B) gọi video tới starter (tài khoản A),
+Zalo Desktop hiện camera trình duyệt mượt, 640x480 ~30 fps (call.log type 6),
+`onCallVideoState 16`. Nguyên nhân đen trước đó (RE Ghidra headless trên binary
+cài sẵn, chi tiết `docs/reverse-engineering/zrtc-video-contract.md`):
+
+1. `RTPReceiverVideo::ParseRtpPacket` gán loại frame theo **PT**: 97 = delta,
+   98 = key. Thư viện gửi IDR trên PT97 → peer không bao giờ thấy keyframe.
+   Sửa: keyframe AU gửi trên PT98 (`h264KeyPayloadType`).
+2. packetMode 2 native gửi `balanced` (AU chia đều), không NAL-aligned → mặc định đổi.
+3. Ghép raw phía nhận: chỉ dựng FU-A khi chuỗi S…E hợp lệ (trước đó byte ngẫu
+   nhiên type 28/29 làm hỏng frame).
+4. Pacing gửi video (4 gói / 3 ms, `videoPacing`), starter 30 fps / 800 kbps.
+5. Gửi lặp camera forward 0x20/0x07 và `/conf` (+2 s); `video.enable` trong
+   `/request` khi gọi đi (`videoRequestEnable`).
+
+Công cụ: `voip.log` của Zalo Desktop giải được (bảng thay thế byte ở offset
+`0xa893b2` của slice arm64); `diagnostics()` có `videoReceivedSamples`/
+`videoSentSamples`. Test 32/32, starter 1/1. Chưa thử: thư viện gọi đi, peer điện thoại.
+
+# zca-js/call: video 1-1 vào public API — 2026-11-23
+
+Đưa video (H.264) từ demo legacy vào `zca-js/call`:
+`createCallController({ video: true })`, `dial(peer, { video: true })`,
+`call.video`, `writeVideo(annexB, { timestamp90k, keyFrame })`, event `video` /
+`keyframe-request` / `remote-camera`, `requestKeyFrame()`, `setCameraEnabled()`,
+`stats().video`. Code: `src/call/voice/videoSession.ts` (bọc `VideoRtpBridge`,
+SRTP/SRTCP video riêng, SR mỗi 1 s, PLI tới khi có IDR đầu và khi thiếu AU),
+`negotiate.ts` (callType 1, h264/97, packetMode từ answer), `voiceCall.ts`
+(`/conf` isOnCam sau confirm và khi bật/tắt, requestcall/cancel type 3).
+Mặc định `video` tắt → hành vi v1 giữ nguyên. Starter `examples/call-audio-starter`
+có nút Gọi video / Nghe video, WebCodecs ở `web/video.js`, frame qua `WS /video`.
+
+Test: `npm run test:call` 27/27 (6 test video mới: SRTP + nal-annexb hai chiều,
+PLI, onoff_camera, outgoing type 3, peer trả audio-only, cancel type 3); starter 1/1;
+tsc/lint/build pass. **Chưa gọi live.** Bước live: Gọi video tới peer bật camera →
+xem `video gửi/nhận`, `AU thiếu`, peer có hiện hình không; nếu đen thử
+`VIDEO_PACKETIZATION=balanced`. Tên field on/off trong `onoff_camera` vẫn đoán
+(`CALL_DEBUG=1` log keys).
+
 # zca-js/call public API — live trial 1 — 2026-11-11
 
 Lib: `src/call/voice/**` → `zca-js/call`, `zca-js/call-webrtc` (docs/call-api.md).

@@ -537,3 +537,88 @@ FU-A. `VideoRtpBridge` selects it for packetMode 2 (balanced raw stays for mode
 rfc6184`. The receive path also reassembles FU-A fragments inside raw mode.
 
 Live verification of the outbound direction is still required.
+
+## ZaloCall 26.11.10 re-check: H.264 packetizer/depacketizer (2026-11-28)
+
+Binary: `/Applications/Zalo.app/Contents/ZaloHelper.app/Contents/MacOS/ZaloCall`
+(Zalo 26.11.10), fat SHA-256 `ad1c7b44…6e6101`, arm64 slice SHA-256
+`1e7db57c26c4712b0d098a1701eca12de2e209bf3b730a9f440c81256e18643c`. Addresses
+below are for this build (they moved slightly from 26.10.20). Method: local
+Ghidra 12 headless, `-noanalysis` import plus targeted decompilation by symbol
+(the binary keeps C++ symbols), and `objdump` for cross-references.
+
+- `RtpPacketizer::Create` (`0x1003da480`) passes
+  `RTPVideoTypeHeader.H264.packetization_mode` (offset +4) to
+  `RtpPacketizerH264`. The send format is chosen **by the encoder's codec-specific
+  info**, not directly by the negotiated packetMode.
+- `RtpPacketizerH264` modes: `7` = balanced raw chunks; `6` = one raw packet per
+  encoder fragment, no size limit; anything else = WebRTC single-NAL / STAP-A /
+  FU-A. `isZRTPRtpPacketizer` is true for modes 0 and 7. The constructor copies
+  the global `updateNalHeaderSize` flag (`0x100d285a8`, `__bss`) into +0x7c for
+  modes 0/7, else forces 1. That flag is written only by
+  `GroupCallPeer::_startPeer` / `_webrtcCfg`, so it is 0 in one-to-one calls.
+- `X264EncoderImpl::Encode` (`0x10040089c`): packet mode 3/4 → one fragment per
+  NAL with the start code skipped; modes 1/2 → **one fragment covering the whole
+  Annex-B access unit (start codes included)**; for mode 2 it passes **no**
+  codec-specific info to the callback. `OpenH264Smc/Svc::SetPacketMode` are
+  no-ops.
+- `VideoRtpRtcp::setPacketMode` (`0x10028f1d4`) still enables receiver mode 7
+  only for packetMode 1 and stores the clamped mode (1..4, else 2).
+- `RtpDepacketizerH264::Parse` (`0x1003db7c4`), mode ≠ 7:
+  - FU-A (type 28) → `ParseFuaNalu`; IDR start → keyframe; FU type 0 is accepted
+    (start fragment rewrites byte 0 and keeps it, offset = flag = 0).
+  - first byte `0x00` (payload starts with an Annex-B start code) → accepted as a
+    raw chunk, **frame type always delta**, NAL type 0, no SPS size parse.
+  - normal NAL header → single NAL; types 5/7/8 → keyframe, SPS parsed for size.
+  So `nal-annexb`, `rfc6184` and raw start-code packets all pass the native
+  depacketizer; only real NAL headers mark keyframes. Packetization alone is
+  therefore unlikely to explain a black peer.
+- `CallController::_checkEventLossVideoAndReason` (`0x100182760`) is the source of
+  `Don't render video frame` / `Rendered video frame`; it is the video-loss
+  quality event (counter at +0x132c vs a config threshold), not a codec gate.
+- Native answer serializer (`ZMessageSerializer::sendAnswerCall`, `0x100026324`)
+  writes only `callerId, callId, status, codec, rtpAddress, rtcpAddress, session,
+  extendData`; video is carried by `extendData` alone, as the replacement does.
+
+Next evidence step: have Zalo Desktop place a video call **to** the library.
+`call.diagnostics()` now exposes `videoReceivedSamples` / `videoSentSamples`
+(`pt/marker/len/hex8` of the first 24 clear packets), first-byte and NAL-type
+counters, so the native desktop sender format can be compared byte-for-byte
+with what the library sends.
+
+## Outbound video renders on Zalo Desktop: keyframes ride PT98 (2026-11-28)
+
+Live, Zalo Desktop 26.11.10 (account B) → library (account A), incoming video.
+Before the fix Zalo Desktop received ~680 kbps from the library (`nettop` on
+the ZaloCall process) yet its `call.log` type-6 receive block stayed
+`[0,0,0,0,0,0]` and `voip.log` only reported `onCallVideoState 12`.
+
+Root cause, `RTPReceiverVideo::ParseRtpPacket` (`0x1003e8a64`): after
+depacketizing it **overrides the frame type from the RTP payload type**
+(`pt - 0x61` against a bitmask): PT 97/122/125 → delta (4), PT 98/121/126 →
+key (3). The bitstream is not consulted (balanced chunks start with `00`).
+The library sent IDR access units on PT97, so the native receiver never saw a
+keyframe and never decoded. Native senders put SPS/PPS/IDR on PT98 and deltas
+on PT97 (live clear-payload trace, same call). Fix: `VideoRtpBridge.sendFrame`
+rewrites the PT of keyframe AUs to the paired key PT (`h264KeyPayloadType`).
+
+Result: Zalo Desktop logged `onCallVideoState 16` one second after confirm and
+rendered the browser camera; type-6 receive block `[640,480,24,640,480,24]`.
+
+Other facts established in the same session:
+
+- Zalo Desktop mode-2 sender = **balanced** raw Annex-B chunks (626+626,
+  713+713, marker on last), not NAL-aligned; the library default for
+  packetMode 2 is now `balanced`.
+- Native `voip.log` (`~/Library/Application Support/ZaloData/cal/voip.log`) is a
+  per-byte substitution of the plaintext; the 256-byte table sits at file
+  offset `0xa893b2` of the arm64 slice. `onCallVideoState` codes:
+  8/9/10 = partner camera off/on/state2 (`vidSetPartnerOffCamera`),
+  12 = video loss ("Don't render"), 13 = rendered again, 16 = video started.
+- `_handleZRTPReqForward` only applies camera forwards `0x20/0x07..0x09` once
+  the call is active; the library now repeats them (and `/conf` once at +2 s).
+- Raw receive: FU-A/FU-B is rebuilt only for a complete S…E chain; random
+  balanced continuation bytes with NAL type 28/29 are kept raw.
+- Zalo Desktop sends **no** video RTCP to the library (`videoRelayVideoRtcpIn`
+  stays 0), so there is no PLI/NACK feedback; periodic keyframes are the only
+  loss recovery.

@@ -1,5 +1,5 @@
 import { isIP } from "node:net";
-import { buildZrtcAcceptedAnswer, type ZrtcAcceptedAnswer, type ZrtcIncomingOffer, type ZrtcOutgoingAnswer, type ZrtcOutgoingPreflight } from "../negotiation.js";
+import { buildZrtcAcceptedAnswer, buildZrtcVideoCapabilities, ZRTC_NATIVE_H264_VIDEO_CODEC, type ZrtcAcceptedAnswer, type ZrtcIncomingOffer, type ZrtcOutgoingAnswer, type ZrtcOutgoingPreflight } from "../negotiation.js";
 import { selectZrtcSrtpKey } from "../srtpParameters.js";
 import { DEFAULT_OUTGOING_CODEC, selectOpusCodec, type SelectedOpusCodec } from "./opus.js";
 import { CallError } from "./errors.js";
@@ -15,6 +15,36 @@ export type MediaSecurity = {
 };
 
 export type RelayEndpoint = { address: string; port: number };
+
+/** Outgoing H.264 packetization: "nal" (packetMode 2 default), "balanced" (mode 1), "rfc6184". */
+export type VideoPacketFormat = "nal" | "balanced" | "rfc6184";
+
+/** Negotiated video leg (H.264 only). */
+export type VideoPlan = {
+    payloadType: number;
+    packetMode: number;
+    packetFormat: VideoPacketFormat;
+};
+
+function videoPlan(payloadType: number, packetMode: number, override?: VideoPacketFormat): VideoPlan {
+    return { payloadType, packetMode, // Live 2026-11-28: Zalo Desktop 26.11.10 under packetMode 2 sends the whole
+    // Annex-B AU split into equal raw chunks (626+626, 713+713, marker on last),
+    // i.e. "balanced", and renders nothing from FU-A/NAL-aligned packets.
+    packetFormat: override ?? (packetMode === 1 || packetMode === 2 ? "balanced" : "nal") };
+}
+
+/** H.264 payload type from a codec list (`[{name:"h264",payload:97}]`), else the native default 97. */
+function h264Payload(codecs: unknown): number {
+    if (Array.isArray(codecs)) {
+        for (const item of codecs) {
+            if (!item || typeof item !== "object") continue;
+            const { name, payload } = item as { name?: unknown; payload?: unknown };
+            if (typeof name === "string" && /h\.?264/i.test(name) && Number.isInteger(payload) && (payload as number) >= 0 && (payload as number) <= 127)
+                return payload as number;
+        }
+    }
+    return ZRTC_NATIVE_H264_VIDEO_CODEC.payload;
+}
 
 export function asUint32(value: unknown): number {
     const number = Number(value);
@@ -90,11 +120,16 @@ function packetModeOf(config: Record<string, unknown>): number {
 export type IncomingPlan = {
     relay: RelayEndpoint;
     security: MediaSecurity;
-    /** Build the accepted-402 body once the relay that actually registered is known. */
-    buildAnswer(registered: RelayEndpoint): ZrtcAcceptedAnswer;
+    /** Present when the offer is a video call. */
+    video: VideoPlan | null;
+    /**
+     * Build the accepted-402 body once the relay that actually registered is known.
+     * `withVideo: false` answers a video offer audio-only (e.g. the relay cannot carry video).
+     */
+    buildAnswer(registered: RelayEndpoint, withVideo?: boolean): ZrtcAcceptedAnswer;
 };
 
-export function planIncoming(offer: ZrtcIncomingOffer): IncomingPlan {
+export function planIncoming(offer: ZrtcIncomingOffer, options: { videoPacketFormat?: VideoPacketFormat } = {}): IncomingPlan {
     const relay = parseEndpoint(offer.rtpAddress);
     if (!relay) throw new CallError("relay-failed", "Offer relay endpoint is not a literal IP address");
     if (offer.rtpAddress !== offer.rtcpAddress)
@@ -110,16 +145,22 @@ export function planIncoming(offer: ZrtcIncomingOffer): IncomingPlan {
         zrtcConfig: local, remoteCapabilities: remote, sessionId: offer.sessionId,
         localUid: offer.uidTo, remoteUid: offer.uidFrom, codec,
     });
+    const video = offer.videoRequested === true
+        ? videoPlan(h264Payload(offer.videoCodecs), packetMode, options.videoPacketFormat) : null;
     return {
-        relay, security,
-        buildAnswer(registered) {
+        relay, security, video,
+        buildAnswer(registered, withVideo = true) {
             const address = formatEndpoint(registered);
+            const answerVideo = withVideo ? video : null;
             // Conservative capability set: relay UDP only, the negotiated SRTP
             // profile/SRTCP flag, no P2P, no congestion-control extensions.
-            const capabilities = {
-                packetMode, srtpMode: security.profile, srtcp: security.srtcp ? 1 : 0, sP2P: 0,
-                gccMode: 0, gccAudio: false, gccSVLR: false, gccEarlyCall: false, tpType: 0, spTcp: 0,
-            };
+            const capabilities = answerVideo
+                ? buildZrtcVideoCapabilities({ srtpMode: security.profile, srtcp: security.srtcp ? 1 : 0, packetMode })
+                : {
+                    packetMode, srtpMode: security.profile, srtcp: security.srtcp ? 1 : 0, sP2P: 0,
+                    gccMode: 0, gccAudio: false, gccSVLR: false, gccEarlyCall: false, tpType: 0, spTcp: 0,
+                };
+            if (answerVideo) (capabilities as Record<string, unknown>).video = { codec: [{ name: "h264", payload: answerVideo.payloadType }] };
             return buildZrtcAcceptedAnswer({ offer, codecs: [codec.item], rtpAddress: address, rtcpAddress: address, capabilities });
         },
     };
@@ -133,9 +174,11 @@ export type OutgoingPlan = {
     capabilities: Record<string, unknown>;
     localUid: number;
     remoteUid: number;
+    /** Present for a video call (requestcall typeRequest 3). */
+    video: VideoPlan | null;
 };
 
-export function planOutgoing(preflight: ZrtcOutgoingPreflight): OutgoingPlan {
+export function planOutgoing(preflight: ZrtcOutgoingPreflight, options: { video?: boolean; videoPacketFormat?: VideoPacketFormat } = {}): OutgoingPlan {
     if (preflight.status !== 0) throw new CallError("zalo-rejected", `Zalo refused the call (status ${preflight.status})`);
     const local = preflight.zrtcConfig || {};
     if (local.srtpMode !== 1 && local.srtpMode !== 2) throw new CallError("internal", "Call config has no supported SRTP profile");
@@ -146,12 +189,17 @@ export function planOutgoing(preflight: ZrtcOutgoingPreflight): OutgoingPlan {
         return endpoint ? [{ endpoint, rtpAddress: server.rtpAddress, rtcpAddress: server.rtcpAddress }] : [];
     });
     if (!candidates.length) throw new CallError("relay-failed", "Zalo returned no usable relay candidate");
-    const capabilities = {
-        callType: 0, newZrtc: Number.isInteger(local.newZrtc) ? local.newZrtc : 0,
-        platform: 2, packetMode: packetModeOf(local), gccMode: 0, srtpMode: local.srtpMode, sP2P: 0,
-        srtcp: localSrtcpFlag(local), gccAudio: 0, gccSVLR: 0, tpType: 0, spTcp: 0, gccEarlyCall: 0,
-    };
-    return { candidates, codec, capabilities, localUid: asUint32(preflight.fromId), remoteUid: asUint32(preflight.toId) };
+    const packetMode = packetModeOf(local);
+    const capabilities = options.video
+        ? buildZrtcVideoCapabilities({ srtpMode: local.srtpMode, srtcp: localSrtcpFlag(local), packetMode,
+            newZrtc: Number.isInteger(local.newZrtc) ? local.newZrtc as number : 0 })
+        : {
+            callType: 0, newZrtc: Number.isInteger(local.newZrtc) ? local.newZrtc : 0,
+            platform: 2, packetMode, gccMode: 0, srtpMode: local.srtpMode, sP2P: 0,
+            srtcp: localSrtcpFlag(local), gccAudio: 0, gccSVLR: 0, tpType: 0, spTcp: 0, gccEarlyCall: 0,
+        };
+    const video = options.video ? videoPlan(ZRTC_NATIVE_H264_VIDEO_CODEC.payload, packetMode, options.videoPacketFormat) : null;
+    return { candidates, codec, capabilities, localUid: asUint32(preflight.fromId), remoteUid: asUint32(preflight.toId), video };
 }
 
 /** Security for the caller once the callee's answer (status 0) has arrived. */
@@ -164,4 +212,18 @@ export function securityForOutgoingAnswer(preflight: ZrtcOutgoingPreflight, plan
         zrtcConfig: preflight.zrtcConfig || {}, remoteCapabilities: remote, sessionId: preflight.sessionId,
         localUid: preflight.fromId, remoteUid: preflight.toId, codec: plan.codec,
     });
+}
+
+/**
+ * Caller-side video leg once the callee answered. The callee's depacketizer
+ * follows *its* packetMode, which the answer reports; its H.264 payload type
+ * comes from answer extendData.video.codec when present.
+ */
+export function videoForOutgoingAnswer(plan: OutgoingPlan, answer: ZrtcOutgoingAnswer, override?: VideoPacketFormat): VideoPlan | null {
+    if (!plan.video) return null;
+    const remote = parseObject(answer.extendData, "Answer extendData");
+    if (remote.callType !== undefined && remote.callType !== 1) return null; // peer answered audio-only
+    const remoteVideo = remote.video && typeof remote.video === "object" ? remote.video as Record<string, unknown> : {};
+    const packetMode = Number.isInteger(remote.packetMode) ? remote.packetMode as number : plan.video.packetMode;
+    return videoPlan(remoteVideo.codec !== undefined ? h264Payload(remoteVideo.codec) : plan.video.payloadType, packetMode, override);
 }

@@ -13,7 +13,16 @@ const logger = {
 
 function describeCall(call) {
     if (!call) return null;
-    return { id: call.id, peerId: call.peerId, direction: call.direction, state: call.state, stats: call.stats() };
+    return { id: call.id, peerId: call.peerId, direction: call.direction, state: call.state, video: call.video, stats: call.stats() };
+}
+
+/** Binary video frame on WS /video: [flags u8 (bit0 = keyframe)][timestamp90k u32 BE][H.264 Annex-B AU]. */
+function encodeVideoFrame(frame) {
+    const out = Buffer.allocUnsafe(5 + frame.data.length);
+    out[0] = frame.keyFrame ? 1 : 0;
+    out.writeUInt32BE(frame.timestamp >>> 0, 1);
+    out.set(frame.data, 5);
+    return out;
 }
 
 /**
@@ -27,6 +36,13 @@ export function createBackend({ publish, iceServers = [], createZalo = () => new
     let statsTimer = null;
     let abortLogin = null;
     let generation = 0;
+    const videoSockets = new Set();
+    const toVideoSockets = message => {
+        for (const ws of videoSockets) {
+            // Drop frames for a slow browser instead of buffering unboundedly.
+            if (ws.readyState === 1 && ws.bufferedAmount < 2 * 1024 * 1024) ws.send(message);
+        }
+    };
 
     const setZalo = (state, extra = {}) => { zaloState = state; publish("zalo-state", { state, ...extra }); };
 
@@ -34,7 +50,21 @@ export function createBackend({ publish, iceServers = [], createZalo = () => new
         call.on("state", state => publish("call-state", describeCall(call) ?? { state }));
         call.on("error", error => publish("call-error", { code: error.code, message: error.message }));
         call.on("remote-mute", muted => publish("call-remote-mute", { muted }));
+        if (call.video) {
+            call.on("video", frame => toVideoSockets(encodeVideoFrame(frame)));
+            // Peer's decoder lost sync: ask the browser encoder for an IDR.
+            call.on("keyframe-request", () => toVideoSockets(JSON.stringify({ type: "keyframe" })));
+            call.on("remote-camera", on => publish("call-remote-camera", { on }));
+        }
+        // CALL_DEBUG: dump video counters (no keys/IPs; diagnostics() is redacted) to the server log.
+        const debugVideo = label => {
+            if (!process.env.CALL_DEBUG || !call.video) return;
+            const d = call.diagnostics();
+            console.log(`[call] ${label}`, { video: call.stats().video, ...Object.fromEntries(Object.entries(d).filter(([k]) => /^video/.test(k))) });
+        };
+        let debugTicks = 0;
         call.once("ended", info => {
+            debugVideo("video final");
             publish("call-ended", { ...info, id: call.id, peerId: call.peerId, diagnostics: call.diagnostics() });
             clearInterval(statsTimer); statsTimer = null;
         });
@@ -42,13 +72,16 @@ export function createBackend({ publish, iceServers = [], createZalo = () => new
         statsTimer = setInterval(() => {
             if (call.state === "ended") return;
             publish("call-stats", { ...call.stats(), diagnostics: call.diagnostics() });
+            if (++debugTicks % 5 === 0) debugVideo("video stats");
         }, 1000);
         if (bridge) bridge.attach(call);
     }
 
     async function startController() {
         await controller?.destroy();
-        controller = createCallController({ api, listener: api.listener, logger, sendRinging: true });
+        controller = createCallController({ api, listener: api.listener, logger, sendRinging: true, video: true,
+            videoPacketFormat: process.env.VIDEO_PACKETIZATION || undefined,
+            videoRequestEnable: process.env.VIDEO_REQUEST_ENABLE !== "0" });
         controller.on("incoming", call => {
             watchCall(call);
             publish("call-incoming", describeCall(call));
@@ -128,17 +161,41 @@ export function createBackend({ publish, iceServers = [], createZalo = () => new
                 }
                 case "media.close": { bridge?.close(); bridge = null; return { closed: true }; }
                 case "call.dial": {
-                    const call = await requireController().dial(String(data.peerId || ""));
+                    const call = await requireController().dial(String(data.peerId || ""), { video: data.video === true });
                     watchCall(call);
                     publish("call-state", describeCall(call));
                     return describeCall(call);
                 }
-                case "call.answer": { const call = requireCall(); await call.answer(); return describeCall(call); }
+                case "call.answer": {
+                    const call = requireCall();
+                    // Voice-only answer of a video call: tell the peer our camera is off.
+                    if (data.camera === false) call.setCameraEnabled(false);
+                    await call.answer();
+                    return describeCall(call);
+                }
                 case "call.reject": { const call = requireCall(); await call.reject(); return describeCall(call); }
                 case "call.hangup": { const call = controller?.active(); await call?.hangup(); return { ended: true }; }
                 case "call.mute": { requireCall().setMuted(Boolean(data.muted)); return { muted: Boolean(data.muted) }; }
+                case "call.camera": { requireCall().setCameraEnabled(Boolean(data.enabled)); return { enabled: Boolean(data.enabled) }; }
                 default: throw new Error("Unsupported action");
             }
+        },
+        /** WS /video: browser → binary encoded frames / {"type":"pli"}; backend → remote frames / {"type":"keyframe"}. */
+        attachVideoSocket(ws) {
+            videoSockets.add(ws);
+            ws.on("close", () => videoSockets.delete(ws));
+            ws.on("message", (message, isBinary) => {
+                const call = controller?.active();
+                if (!call || call.state !== "connected") return;
+                if (!isBinary) {
+                    try { if (JSON.parse(String(message)).type === "pli") call.requestKeyFrame(); } catch { /* ignore */ }
+                    return;
+                }
+                const bytes = message instanceof Buffer ? message : Buffer.concat(message);
+                if (bytes.length < 6) return;
+                try { call.writeVideo(bytes.subarray(5), { timestamp90k: bytes.readUInt32BE(1), keyFrame: (bytes[0] & 1) === 1 }); }
+                catch (error) { publish("call-error", { code: error.code, message: error.message }); }
+            });
         },
         snapshot() {
             return { zalo: zaloState, call: describeCall(controller?.active() ?? null), bridge: bridge?.connectionState ?? null };

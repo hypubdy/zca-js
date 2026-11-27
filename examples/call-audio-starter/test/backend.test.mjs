@@ -18,7 +18,7 @@ const request = (video = false, id = 9) => ({ act_type: "voip", act: "request", 
         codec: JSON.stringify([{ name: "opus/16000/1", payload: 112, frmPtime: 20, dynamicFptime: 0 }]),
         extendData: JSON.stringify({ srtpMode: 1, srtcp: 0, packetMode: 2, callType: video ? 1 : 0 }), zrtc_config: { srtpMode: 1, packetMode: 2 } }) } });
 
-test("login → online → incoming → reject; video ignored", async () => {
+test("login → online → incoming video → reject → incoming voice → reject", async () => {
     const events = [], signals = [];
     const { api, client } = fakeZalo(signals);
     const backend = createBackend({ publish: (event, data) => events.push([event, data]), createZalo: () => client });
@@ -28,12 +28,18 @@ test("login → online → incoming → reject; video ignored", async () => {
     assert.ok(events.some(([e]) => e === "zalo-qr"));
     assert.deepEqual(await backend.handle("friends.list"), [{ id: "42", name: "Peer" }]);
 
+    // The starter enables createCallController({ video: true }).
     api.listener.emit("call", request(true));
-    assert.deepEqual(events.find(([e]) => e === "call-unsupported")[1], { peerId: "300", callId: "9", kind: "video" });
+    const incomingVideo = events.find(([e]) => e === "call-incoming")[1];
+    assert.equal(incomingVideo.video, true);
+    await backend.handle("call.reject");
+    assert.equal(events.find(([e]) => e === "call-ended")[1].reason, "rejected");
 
+    events.length = 0;
     api.listener.emit("call", request(false, 10));
     const incoming = events.find(([e]) => e === "call-incoming")[1];
     assert.equal(incoming.peerId, "300");
+    assert.equal(incoming.video, false);
     await backend.handle("call.reject");
     assert.equal(events.find(([e]) => e === "call-ended")[1].reason, "rejected");
     assert.ok(signals.some(([name, payload]) => name === "answer" && payload.status === 3));

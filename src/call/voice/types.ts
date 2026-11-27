@@ -1,6 +1,7 @@
 import type { ZrtpRelayInit } from "../relayRegistration.js";
 import type { ZrtpRelayMedia } from "../relayMediaPacket.js";
 import type { AudioRelay } from "./audioSession.js";
+import type { VideoPacketFormat } from "./negotiate.js";
 
 export type CallState =
     | "incoming"   // ringing on our side
@@ -41,6 +42,19 @@ export type CallStats = {
      * signals unmute). Distinguishes "peer muted" from "we decode silence".
      */
     remoteMuted: boolean;
+    /** Video calls only (all zero for voice calls). */
+    video: VideoStats;
+};
+
+export type VideoStats = {
+    framesSent: number;
+    keyFramesSent: number;
+    framesReceived: number;
+    keyFramesReceived: number;
+    /** Received access units dropped because an RTP packet was missing. */
+    incompleteFrames: number;
+    /** True after the peer signalled `onoff_camera` off (until it turns it back on). */
+    remoteCameraOff: boolean;
 };
 
 export type CallLogger = {
@@ -58,7 +72,9 @@ export type VoiceCallSignaling = {
     answerAck(calleeId: string, callId: string): Promise<unknown>;
     requestCall(payload: { calleeId: string; callId: string; typeRequest: 1 | 3; codec?: string }): Promise<unknown>;
     request(payload: { calleeId: string; callId: string; rtcpAddress: string; rtpAddress: string; codec: string;
-        session: string; extendData?: string }): Promise<unknown>;
+        session: string; extendData?: string; video?: { enable: 0 | 1 } }): Promise<unknown>;
+    /** `/api/voicecall/conf`: tells the peer's Zalo UI our camera is on/off. Needed for video calls. */
+    sendOnOffCamMic?(payload: { calleeId: string; callId: string | number; isOnCam: 0 | 1; isOnMic: -1 | 0 | 1; data?: string }): Promise<unknown>;
     cancel(callerId: string, callId: string, callType: number): Promise<unknown>;
     end(uidTo: string, callId: string): Promise<unknown>;
 };
@@ -90,6 +106,29 @@ export type CallControllerOptions = {
      * Desktop does. Never sent for ignored (video/group) calls. Default true.
      */
     sendRinging?: boolean;
+    /**
+     * Accept incoming 1-to-1 **video** calls (emitted as "incoming" with
+     * `call.video === true`). Default false: video offers are ignored and
+     * reported as "incoming-unsupported", as in v1.
+     */
+    video?: boolean;
+    /**
+     * Outgoing H.264 packetization override. Default: "nal" for packetMode 2
+     * (what a live Zalo peer sends), "balanced" for packetMode 1.
+     */
+    videoPacketFormat?: VideoPacketFormat;
+    /**
+     * Send `video: { enable: 1 }` in `/request` for outgoing video calls, like
+     * native Zalo callers. The callee reads it to arm its video receiver.
+     * Default true; set false to compare against the 2026-10 behavior.
+     */
+    videoRequestEnable?: boolean;
+    /**
+     * Pace outgoing video packets (bursts of 4 every 3 ms) instead of sending a
+     * whole keyframe at once. Default true; Zalo gives no NACK/PLI feedback,
+     * so burst loss freezes the peer's picture until the next keyframe.
+     */
+    videoPacing?: boolean;
     /** @internal Test hook: replaces the UDP relay transport. */
     openRelay?: OpenRelay;
     /** @internal Test hook: connection (answer → ACK) timeout. Default 20 000. */

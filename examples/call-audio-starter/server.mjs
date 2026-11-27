@@ -33,7 +33,8 @@ async function readBody(req, limit = 256 * 1024) {
     return Buffer.concat(chunks).toString("utf8");
 }
 
-const files = { "/": ["index.html", "text/html; charset=utf-8"], "/app.js": ["app.js", "text/javascript; charset=utf-8"] };
+const files = { "/": ["index.html", "text/html; charset=utf-8"], "/app.js": ["app.js", "text/javascript; charset=utf-8"],
+    "/video.js": ["video.js", "text/javascript; charset=utf-8"] };
 
 const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, `http://${req.headers.host || host}`);
@@ -59,9 +60,15 @@ const server = http.createServer(async (req, res) => {
 });
 
 const wss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
+const videoWss = new WebSocketServer({ noServer: true, maxPayload: 4 * 1024 * 1024 });
 server.on("upgrade", (req, socket, head) => {
     const pathname = new URL(req.url, "http://x").pathname;
-    if (pathname !== "/ws" || !allowedOrigins.has(req.headers.origin)) { socket.destroy(); return; }
+    if (!allowedOrigins.has(req.headers.origin)) { socket.destroy(); return; }
+    if (pathname === "/video") {
+        videoWss.handleUpgrade(req, socket, head, ws => backend.attachVideoSocket(ws));
+        return;
+    }
+    if (pathname !== "/ws") { socket.destroy(); return; }
     wss.handleUpgrade(req, socket, head, ws => {
         sockets.add(ws);
         ws.send(JSON.stringify({ event: "snapshot", data: backend.snapshot() }));
@@ -70,10 +77,10 @@ server.on("upgrade", (req, socket, head) => {
     });
 });
 
-server.listen(port, host, () => console.log(`Call audio starter: http://${host}:${port}`));
+server.listen(port, host, () => console.log(`Call starter (voice + video): http://${host}:${port}`));
 async function shutdown() {
     await backend.close().catch(() => {});
-    wss.close(); server.close();
+    wss.close(); videoWss.close(); server.close();
     // @roamhq/wrtc can segfault during native teardown at a normal exit; exit explicitly.
     process.exit(0);
 }
