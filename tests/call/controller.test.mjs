@@ -48,7 +48,7 @@ function makeHarness({ ringTimeoutMs = 60_000, sendRinging, connectTimeoutMs } =
     const controller = createCallController({ api: { voiceCall }, listener, logger, ringTimeoutMs, sendRinging,
         openRelay, connectTimeoutMs });
     const control = (act, data) => listener.emit("call", { act_type: "voip", act, data });
-    return { listener, controller, signals, relays, logs, control };
+    return { listener, controller, signals, relays, logs, control, voiceCall };
 }
 
 function incomingRequest({ id = 42, video = false } = {}) {
@@ -148,7 +148,28 @@ test("incoming: reject sends decline status 3", async () => {
     assert.deepEqual(ended.map(e => e.reason), ["rejected"]);
     const answer = h.signals.find(s => s[0] === "answer")[1];
     assert.equal(answer.status, 3);
+    // Native declines with the full /answer body; a bare {status: 3} is refused by Zalo.
+    assert.equal(answer.rtpAddress, `${RELAY_IP}:4200`);
+    assert.equal(answer.rtcpAddress, `${RELAY_IP}:4200`);
+    assert.ok(JSON.parse(answer.codec).length >= 1, "decline carries the selected audio codec");
+    assert.ok(answer.extendData && JSON.parse(answer.extendData).srtpMode !== undefined, "decline carries local extendData");
+    assert.ok(answer.session_id && answer.session === answer.session_id);
     assert.equal(h.relays.length, 0, "no relay registered for a rejected call");
+    await h.controller.destroy();
+});
+
+test("incoming: refused decline falls back to endcall; both failing makes reject() throw", async () => {
+    const h = makeHarness();
+    h.voiceCall.answer = async () => { throw new Error("Tham số bị thiếu hoặc không đúng"); };
+    const first = await incomingCall(h);
+    await first.reject(); // endcall fallback succeeded → resolves
+    assert.ok(h.signals.some(s => s[0] === "end"), "endcall sent after the refused decline");
+    assert.equal(first.state, "ended");
+
+    h.voiceCall.end = async () => { throw new Error("endcall refused"); };
+    const second = await incomingCall(h, { id: 43 });
+    await assert.rejects(second.reject(), error => error.code === "zalo-rejected");
+    assert.equal(second.state, "ended", "the call still ends locally");
     await h.controller.destroy();
 });
 
