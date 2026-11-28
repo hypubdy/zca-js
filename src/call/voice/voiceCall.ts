@@ -185,6 +185,11 @@ export class VoiceCall extends EventEmitter {
         this.setState("connecting");
         try {
             const plan = planIncoming(offer, { videoPacketFormat: this.runtime.videoPacketFormat });
+            if (plan.video) this.log("debug", "video offer", {
+                // Codec capability only (names/payload ids, packet mode); no keys or addresses.
+                videoCodecs: offer.videoCodecs ?? null, videoCodecIds: offer.videoCodecIds ?? null,
+                videoEnable: offer.videoEnable ?? null, packetMode: plan.video.packetMode,
+            });
             this.security = plan.security;
             const relay = await this.openRelay({
                 isCaller: false, userId: asUint32(offer.uidTo), partnerId: asUint32(offer.uidFrom),
@@ -218,14 +223,17 @@ export class VoiceCall extends EventEmitter {
         if (this._state === "ended") return;
         if (this.direction !== "incoming" || this._state !== "incoming")
             throw new CallError("invalid-state", `Cannot reject a call in state "${this._state}"`);
-        await this.finish("rejected", { signal: "decline" });
+        const failure = await this.finish("rejected", { signal: "decline" });
+        // The call is over locally either way; tell the app the peer may still ring.
+        if (failure) throw failure;
     }
 
     async hangup(): Promise<void> {
         if (this._state === "ended") return;
         const signal = this._state === "incoming" ? "decline"
             : this.direction === "outgoing" && this._state !== "connected" ? "cancel" : "end";
-        await this.finish("local-hangup", { signal });
+        const failure = await this.finish("local-hangup", { signal });
+        if (failure) throw failure;
     }
 
     setMuted(muted: boolean): void {
@@ -530,8 +538,13 @@ export class VoiceCall extends EventEmitter {
         }
     }
 
-    private async finish(reason: EndReason, { signal }: { signal: "none" | "decline" | "cancel" | "end" }): Promise<void> {
-        if (this._state === "ended") return;
+    /**
+     * End the call locally, then send the teardown signal. Never throws (many
+     * callers fire and forget); resolves to the teardown error, if any, so
+     * reject()/hangup() can surface it.
+     */
+    private async finish(reason: EndReason, { signal }: { signal: "none" | "decline" | "cancel" | "end" }): Promise<CallError | null> {
+        if (this._state === "ended") return null;
         const durationMs = this.durationMs();
         this.endedDuration = durationMs;
         this._state = "ended";
@@ -548,25 +561,55 @@ export class VoiceCall extends EventEmitter {
         this.safeEmit("state", "ended");
         this.safeEmit("ended", { reason, durationMs });
         try { this.runtime.onEnded(this); } catch { /* controller bookkeeping */ }
+        let failure: CallError | null = null;
         try { await this.sendTeardown(signal); }
         catch (error) {
             this.log("warn", "teardown signal failed", { signal, error: redactMessage(error) });
+            failure = toCallError(error, "zalo-rejected", `Teardown (${signal}) failed; the peer may keep ringing`);
         }
         this.removeAllListeners("audio");
         this.removeAllListeners("video");
         this.removeAllListeners("keyframe-request");
         this.removeAllListeners("remote-camera");
+        return failure;
     }
 
     private async sendTeardown(signal: "none" | "decline" | "cancel" | "end") {
         const signaling = this.runtime.signaling;
         if (signal === "decline") {
-            const offer = this.offer!;
-            await signaling.answer({ callerId: offer.uidN, callId: this.id, status: DECLINE_STATUS, session_id: offer.sessionId });
+            try { await signaling.answer(this.declinePayload()); }
+            catch (error) {
+                // Make sure the caller stops ringing even if /answer is refused.
+                this.log("warn", "decline answer failed; sending endcall", { error: redactMessage(error) });
+                try { await signaling.end(this.peerId, this.id); }
+                catch { throw error; }
+            }
         } else if (signal === "cancel") {
             if (this.preflight) await signaling.cancel(this.peerId, this.id, this.video ? CALL_TYPE_VIDEO : CALL_TYPE_AUDIO);
         } else if (signal === "end") {
             await signaling.end(this.peerId, this.id);
+        }
+    }
+
+    /**
+     * Native ZCallInfo::UiAnswerCallEvent (26.11.10, 0x1000c8b78) declines with
+     * the same /answer body as accepting, status 3: active audio codecs, local
+     * extendData, current RTP/RTCP server and session. A bare {status: 3}
+     * is refused by Zalo ("Tham số bị thiếu hoặc không đúng") and the caller
+     * keeps ringing. No relay is opened to decline, so the offer's relay is used.
+     */
+    private declinePayload() {
+        const offer = this.offer!;
+        try {
+            const plan = planIncoming(offer, { videoPacketFormat: this.runtime.videoPacketFormat });
+            return { ...plan.buildAnswer(plan.relay), status: DECLINE_STATUS };
+        } catch {
+            // Offer we could not plan (unsupported codec/relay): still send every field native sends.
+            return {
+                callerId: offer.uidN, callId: this.id, status: DECLINE_STATUS,
+                codec: JSON.stringify(offer.codecs ?? []), rtpAddress: offer.rtpAddress, rtcpAddress: offer.rtcpAddress,
+                session_id: offer.sessionId, session: offer.sessionId,
+            };
         }
     }
 

@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 // Call backend built ONLY on the public API: zca-js (login), zca-js/call, zca-js/call-webrtc.
 import { Zalo } from "zca-js";
 import { createCallController } from "zca-js/call";
@@ -51,7 +53,11 @@ export function createBackend({ publish, iceServers = [], createZalo = () => new
         call.on("error", error => publish("call-error", { code: error.code, message: error.message }));
         call.on("remote-mute", muted => publish("call-remote-mute", { muted }));
         if (call.video) {
-            call.on("video", frame => toVideoSockets(encodeVideoFrame(frame)));
+            // CALL_DUMP_VIDEO=<dir>: append received Annex-B AUs to <dir>/<callId>.h264 for offline decode checks.
+            const dump = process.env.CALL_DUMP_VIDEO
+                ? fs.createWriteStream(path.join(process.env.CALL_DUMP_VIDEO, `${call.id}.h264`)) : null;
+            call.on("video", frame => { dump?.write(frame.data); toVideoSockets(encodeVideoFrame(frame)); });
+            call.once("ended", () => dump?.end());
             // Peer's decoder lost sync: ask the browser encoder for an IDR.
             call.on("keyframe-request", () => toVideoSockets(JSON.stringify({ type: "keyframe" })));
             call.on("remote-camera", on => publish("call-remote-camera", { on }));
